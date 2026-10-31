@@ -1,0 +1,25 @@
+[package]
+name = "harel-machines"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors = ["Abdelkader Boudih <oss@seuros.com>"]
+license = "MIT"
+description = "Statechart hierarchy - least common ancestor, exit and entry sets, parallel regions and history over a state tree, no_std with zero dependencies"
+repository = "https://github.com/seuros/harel_machines"
+keywords = ["statechart", "hierarchy", "state-machine", "hsm", "no-std"]
+categories = ["no-std", "data-structures"]
+readme = "README.md"
+exclude = ["src/**/tests.rs"]
+
+[lib]
+name = "harel_machines"
+crate-type = ["lib"]
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+[lints]
+workspace = true
