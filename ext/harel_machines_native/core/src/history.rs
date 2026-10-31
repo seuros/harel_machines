@@ -40,21 +40,27 @@ impl<const STATES: usize> LastActive<STATES> {
     /// Files every state the transition exited under its parent.
     pub fn record(&mut self, chart: &Chart<STATES>, transition: &Transition<STATES>) {
         for &exited in transition.exit() {
-            if let Some(parent) = chart.parent(exited) {
-                self.children[usize::from(parent)] = Some(exited);
+            if let Some(parent) = chart.parent(exited)
+                && let Some(slot) = self.children.get_mut(usize::from(parent))
+            {
+                *slot = Some(exited);
             }
         }
     }
 
     /// Files a child by hand, for a machine whose history was persisted
-    /// elsewhere.
+    /// elsewhere. A parent outside this chart records nothing.
     pub fn remember(&mut self, parent: StateId, child: StateId) {
-        self.children[usize::from(parent)] = Some(child);
+        if let Some(slot) = self.children.get_mut(usize::from(parent)) {
+            *slot = Some(child);
+        }
     }
 
+    /// The child a state held when it was last exited, or `None` for a state
+    /// outside this chart.
     #[must_use]
     pub fn last_child(&self, state: StateId) -> Option<StateId> {
-        self.children[usize::from(state)]
+        self.children.get(usize::from(state)).copied().flatten()
     }
 }
 

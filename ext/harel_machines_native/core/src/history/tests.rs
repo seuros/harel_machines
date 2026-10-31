@@ -44,3 +44,13 @@ fn remembering_nothing_is_the_default() {
 
     assert_eq!(remembered.last_child(2), None);
 }
+
+#[test]
+fn a_state_outside_the_chart_records_nothing_and_reads_as_none() {
+    let mut history: LastActive<4> = LastActive::new();
+
+    history.remember(99, 1);
+
+    assert_eq!(history.last_child(99), None);
+    assert_eq!(history.last_child(1), None);
+}
