@@ -46,6 +46,13 @@ fn history(ruby: &Ruby, name: Option<Symbol>) -> Result<History, Error> {
     }
 }
 
+fn not_a_child(ruby: &Ruby, compound: &str, initial: &str) -> Error {
+    Error::new(
+        ruby.exception_arg_error(),
+        format!("initial state :{initial} is not a child of :{compound}"),
+    )
+}
+
 impl Default for Declaration {
     fn default() -> Self {
         Self::new()
@@ -125,21 +132,32 @@ impl Declaration {
     /// # Errors
     ///
     /// `ArgumentError` if a parent or an initial child names a state that was
-    /// never declared.
+    /// never declared, or if an initial child is not a child of the compound
+    /// state that names it.
     pub fn resolve(&self, ruby: &Ruby) -> Result<(Names, Vec<State>), Error> {
         let declared = self.0.borrow();
         let names = Names::new(declared.iter().map(|state| state.name.clone()).collect());
-        let mut states = Vec::with_capacity(declared.len());
+        let mut parents = Vec::with_capacity(declared.len());
         for state in declared.iter() {
-            let parent = state
-                .parent
-                .as_deref()
-                .map(|parent| names.id(ruby, parent))
-                .transpose()?;
+            parents.push(
+                state
+                    .parent
+                    .as_deref()
+                    .map(|parent| names.id(ruby, parent))
+                    .transpose()?,
+            );
+        }
+        let mut states = Vec::with_capacity(declared.len());
+        for (state, id) in declared.iter().zip(names.ids()) {
+            let parent = parents[usize::from(id)];
             let core = match &state.composition {
                 Composition::Atomic => State::atomic(parent),
                 Composition::Compound { initial } => {
-                    State::compound(parent, names.id(ruby, initial)?)
+                    let child = names.id(ruby, initial)?;
+                    if parents[usize::from(child)] != Some(id) {
+                        return Err(not_a_child(ruby, &state.name, initial));
+                    }
+                    State::compound(parent, child)
                 }
                 Composition::Parallel => State::parallel(parent),
             };

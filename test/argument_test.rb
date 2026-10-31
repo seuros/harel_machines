@@ -28,6 +28,17 @@ module HarelMachines
       end
     end
 
+    def test_an_initial_child_that_is_not_a_child_is_rejected
+      error = assert_raises(ArgumentError) do
+        Chart.build do |c|
+          c.compound :p, initial: :outside
+          c.state :outside
+        end
+      end
+
+      assert_equal 'initial state :outside is not a child of :p', error.message
+    end
+
     def test_a_tree_query_rejects_an_unknown_state
       assert_raises(ArgumentError) { @chart.depth(:nowhere) }
       assert_raises(ArgumentError) { @chart.ancestor?(:on, :nowhere) }
