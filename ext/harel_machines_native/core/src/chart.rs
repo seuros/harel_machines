@@ -385,10 +385,44 @@ impl<const STATES: usize> Chart<STATES> {
         let mut remaining = upward.len();
         while remaining > 0 {
             remaining -= 1;
-            entry.push(upward.get(remaining))?;
+            let state = upward.get(remaining);
+            entry.push(state)?;
+
+            if remaining > 0 && matches!(self.state(state).composition, Composition::Parallel) {
+                self.descend_siblings(state, upward.get(remaining - 1), last_active, entry)?;
+            }
         }
 
         self.descend(target, Restore::Initial, last_active, entry)
+    }
+
+    /// Entering a parallel state activates every region. One region is already
+    /// on the explicit path to the target; the rest take their defaults.
+    fn descend_siblings(
+        &self,
+        parallel: StateId,
+        on_path: StateId,
+        last_active: &LastActive<STATES>,
+        entry: &mut Buffer<STATES>,
+    ) -> Result<(), Error> {
+        let restore = Restore::Initial.upgraded_by(self.state(parallel).history);
+        let mut region: StateId = 0;
+        let mut entered = false;
+        while usize::from(region) < STATES {
+            if self.parent(region) == Some(parallel) {
+                entered = true;
+                if region != on_path {
+                    entry.push(region)?;
+                    self.descend(region, restore, last_active, entry)?;
+                }
+            }
+            region += 1;
+        }
+        if entered {
+            Ok(())
+        } else {
+            Err(Error::EmptyParallel)
+        }
     }
 
     /// Entering a composite state means entering one of its children, so entry

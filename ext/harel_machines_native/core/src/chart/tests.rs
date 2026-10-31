@@ -328,3 +328,14 @@ fn a_parallel_state_without_regions_cannot_be_entered() {
 
     assert_eq!(BARREN.enter(0), Err(Error::EmptyParallel));
 }
+
+#[test]
+fn targeting_one_region_still_activates_the_others() -> Result<(), Error> {
+    let chart = radio(History::None);
+
+    let step = chart.resolve(&configuration(&[1]), 1, 4, TransitionKind::External)?;
+
+    assert_eq!(step.entry(), &[2, 6, 7, 3, 4]);
+    assert_eq!(step.configuration().as_slice(), &[4, 7]);
+    Ok(())
+}
