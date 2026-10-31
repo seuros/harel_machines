@@ -335,7 +335,7 @@ fn targeting_one_region_still_activates_the_others() -> Result<(), Error> {
 
     let step = chart.resolve(&configuration(&[1]), 1, 4, TransitionKind::External)?;
 
-    assert_eq!(step.entry(), &[2, 6, 7, 3, 4]);
+    assert_eq!(step.entry(), &[2, 3, 4, 6, 7]);
     assert_eq!(step.configuration().as_slice(), &[4, 7]);
     Ok(())
 }

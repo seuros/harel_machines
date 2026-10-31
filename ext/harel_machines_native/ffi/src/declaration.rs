@@ -53,6 +53,13 @@ fn not_a_child(ruby: &Ruby, compound: &str, initial: &str) -> Error {
     )
 }
 
+fn atomic_parent(ruby: &Ruby, parent: &str, child: &str) -> Error {
+    Error::new(
+        ruby.exception_arg_error(),
+        format!("atomic state :{parent} cannot contain :{child}, declare it compound or parallel"),
+    )
+}
+
 impl Default for Declaration {
     fn default() -> Self {
         Self::new()
@@ -132,11 +139,14 @@ impl Declaration {
     /// # Errors
     ///
     /// `ArgumentError` if a parent or an initial child names a state that was
-    /// never declared, or if an initial child is not a child of the compound
-    /// state that names it.
+    /// never declared, if an initial child is not a child of the compound
+    /// state that names it, or if an atomic state was given children.
     pub fn resolve(&self, ruby: &Ruby) -> Result<(Names, Vec<State>), Error> {
         let declared = self.0.borrow();
-        let names = Names::new(declared.iter().map(|state| state.name.clone()).collect());
+        let names = Names::new(
+            ruby,
+            declared.iter().map(|state| state.name.clone()).collect(),
+        )?;
         let mut parents = Vec::with_capacity(declared.len());
         for state in declared.iter() {
             parents.push(
@@ -147,11 +157,26 @@ impl Declaration {
                     .transpose()?,
             );
         }
+        let mut firstborn = vec![None; declared.len()];
+        for (parent, id) in parents.iter().zip(names.ids()) {
+            if let Some(parent) = *parent {
+                firstborn[usize::from(parent)].get_or_insert(id);
+            }
+        }
         let mut states = Vec::with_capacity(declared.len());
         for (state, id) in declared.iter().zip(names.ids()) {
             let parent = parents[usize::from(id)];
             let core = match &state.composition {
-                Composition::Atomic => State::atomic(parent),
+                Composition::Atomic => {
+                    if let Some(child) = firstborn[usize::from(id)] {
+                        return Err(atomic_parent(
+                            ruby,
+                            &state.name,
+                            &declared[usize::from(child)].name,
+                        ));
+                    }
+                    State::atomic(parent)
+                }
                 Composition::Compound { initial } => {
                     let child = names.id(ruby, initial)?;
                     if parents[usize::from(child)] != Some(id) {

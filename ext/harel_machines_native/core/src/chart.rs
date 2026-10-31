@@ -375,58 +375,73 @@ impl<const STATES: usize> Chart<STATES> {
         last_active: &LastActive<STATES>,
         entry: &mut Buffer<STATES>,
     ) -> Result<(), Error> {
-        let mut upward = Buffer::<STATES>::new();
+        let mut path = Buffer::<STATES>::new();
         let mut cursor = target;
         while cursor != domain {
-            upward.push(cursor)?;
+            path.push(cursor)?;
             cursor = self.parent(cursor).ok_or(Error::NoCommonAncestor)?;
         }
 
-        if upward.len() > 0 && matches!(self.state(domain).composition, Composition::Parallel) {
-            self.descend_siblings(domain, upward.get(upward.len() - 1), last_active, entry)?;
-        }
-
-        let mut remaining = upward.len();
-        while remaining > 0 {
-            remaining -= 1;
-            let state = upward.get(remaining);
-            entry.push(state)?;
-
-            if remaining > 0 && matches!(self.state(state).composition, Composition::Parallel) {
-                self.descend_siblings(state, upward.get(remaining - 1), last_active, entry)?;
-            }
-        }
-
-        self.descend(target, Restore::Initial, last_active, entry)
+        self.descend_along(domain, &path, Restore::Initial, last_active, entry)
     }
 
-    /// Entering a parallel state activates every region. One region is already
-    /// on the explicit path to the target; the rest take their defaults.
-    fn descend_siblings(
+    /// Descends from `state`, taking the child on `path` where there is one
+    /// and the default otherwise, so a region's subtree stays contiguous and
+    /// regions keep their declared order whichever descendant is targeted.
+    fn descend_along(
         &self,
-        parallel: StateId,
-        on_path: StateId,
+        state: StateId,
+        path: &Buffer<STATES>,
+        inherited: Restore,
         last_active: &LastActive<STATES>,
         entry: &mut Buffer<STATES>,
     ) -> Result<(), Error> {
-        let restore = Restore::Initial.upgraded_by(self.state(parallel).history);
-        let mut region: StateId = 0;
-        let mut entered = false;
-        while usize::from(region) < STATES {
-            if self.parent(region) == Some(parallel) {
-                entered = true;
-                if region != on_path {
-                    entry.push(region)?;
-                    self.descend(region, restore, last_active, entry)?;
+        let restore = inherited.upgraded_by(self.state(state).history);
+        match self.state(state).composition {
+            Composition::Atomic => Ok(()),
+            Composition::Compound { initial } => {
+                let chosen = self.on_path(path, state).map_or_else(
+                    || match (restore, last_active.last_child(state)) {
+                        (Restore::Subtree, Some(child)) => (child, Restore::Subtree),
+                        (Restore::Child, Some(child)) => (child, Restore::Initial),
+                        _ => (initial, Restore::Initial),
+                    },
+                    |child| (child, restore),
+                );
+                entry.push(chosen.0)?;
+                self.descend_along(chosen.0, path, chosen.1, last_active, entry)
+            }
+            Composition::Parallel => {
+                let mut region: StateId = 0;
+                let mut entered = false;
+                while usize::from(region) < STATES {
+                    if self.parent(region) == Some(state) {
+                        entered = true;
+                        entry.push(region)?;
+                        self.descend_along(region, path, restore, last_active, entry)?;
+                    }
+                    region += 1;
+                }
+                if entered {
+                    Ok(())
+                } else {
+                    Err(Error::EmptyParallel)
                 }
             }
-            region += 1;
         }
-        if entered {
-            Ok(())
-        } else {
-            Err(Error::EmptyParallel)
+    }
+
+    /// The child of `state` that the explicit path runs through, if any.
+    fn on_path(&self, path: &Buffer<STATES>, state: StateId) -> Option<StateId> {
+        let mut index = 0;
+        while index < path.len() {
+            let candidate = path.get(index);
+            if self.parent(candidate) == Some(state) {
+                return Some(candidate);
+            }
+            index += 1;
         }
+        None
     }
 
     /// Entering a composite state means entering one of its children, so entry

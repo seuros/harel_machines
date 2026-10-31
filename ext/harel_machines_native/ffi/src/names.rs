@@ -12,13 +12,21 @@ pub struct Names {
 }
 
 impl Names {
-    pub fn new(order: Vec<String>) -> Self {
-        let ids = order
-            .iter()
-            .zip(0..)
-            .map(|(name, id)| (name.clone(), id))
-            .collect();
-        Self { order, ids }
+    /// # Errors
+    ///
+    /// `ArgumentError` if a name is declared twice: the duplicate would be
+    /// unreachable and every lookup would resolve to the later index.
+    pub fn new(ruby: &Ruby, order: Vec<String>) -> Result<Self, Error> {
+        let mut ids = HashMap::with_capacity(order.len());
+        for (name, id) in order.iter().zip(0..) {
+            if ids.insert(name.clone(), id).is_some() {
+                return Err(Error::new(
+                    ruby.exception_arg_error(),
+                    format!("state {name} is declared twice"),
+                ));
+            }
+        }
+        Ok(Self { order, ids })
     }
 
     /// The index of the state called `name`.

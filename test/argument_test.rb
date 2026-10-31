@@ -39,6 +39,17 @@ module HarelMachines
       assert_equal 'initial state :outside is not a child of :p', error.message
     end
 
+    def test_a_child_of_an_atomic_state_is_rejected
+      error = assert_raises(ArgumentError) do
+        Chart.build do |c|
+          c.state :leaf
+          c.state :buried, parent: :leaf
+        end
+      end
+
+      assert_equal 'atomic state :leaf cannot contain :buried, declare it compound or parallel', error.message
+    end
+
     def test_a_tree_query_rejects_an_unknown_state
       assert_raises(ArgumentError) { @chart.depth(:nowhere) }
       assert_raises(ArgumentError) { @chart.ancestor?(:on, :nowhere) }
