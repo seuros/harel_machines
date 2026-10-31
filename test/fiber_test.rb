@@ -21,8 +21,12 @@ module HarelMachines
       assert_equal SHAPES.max, entry.entry.length
       assert_equal REGIONS, entry.configuration.length
       assert_equal REGIONS, step.exit.length
-      assert_equal %i[region1], step.entry
-      assert_equal %i[region1], step.configuration
+
+      # The transition domain is the parallel root, so every region it exited
+      # has to come back, not only the target's.
+      assert_equal REGIONS, step.entry.length
+      assert_equal REGIONS, step.configuration.length
+      assert_includes step.configuration, :region1
     end
   end
 end
