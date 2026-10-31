@@ -144,7 +144,10 @@ impl Chart {
             get_kwargs::<_, (), (Option<Obj<History>>,), ()>(args.keywords, &[], &["history"])?
                 .optional;
         let state = rb_self.names.symbol_id(ruby, args.required.0)?;
-        let held = history.as_ref().map(|history| history.children());
+        let held = history
+            .as_ref()
+            .map(|history| history.held(ruby, rb_self))
+            .transpose()?;
         let resolved = rb_self
             .tree
             .enter(state, held.as_deref().unwrap_or(&[]))
@@ -171,7 +174,10 @@ impl Chart {
         for leaf in args.required.0 {
             leaves.push(rb_self.names.symbol_id(ruby, Symbol::try_convert(leaf)?)?);
         }
-        let held = history.as_ref().map(|history| history.children());
+        let held = history
+            .as_ref()
+            .map(|history| history.held(ruby, rb_self))
+            .transpose()?;
         let resolved = rb_self
             .tree
             .resolve(

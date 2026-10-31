@@ -96,7 +96,7 @@ module HarelMachines
       assert_same @history, @history.record(step)
     end
 
-    def test_a_history_of_a_larger_chart_reads_no_further_than_this_one
+    def test_a_history_of_another_chart_is_refused
       wide = Chart.build do |c|
         c.compound :root, initial: :first
         c.state :first, parent: :root
@@ -107,9 +107,10 @@ module HarelMachines
       elsewhere = History.new(wide)
       elsewhere.record(wide.resolve(%i[leaf], from: :last, to: :first))
 
-      step = @chart.resolve(%i[closed], from: :closed, to: :open, history: elsewhere)
-
-      assert_equal %i[open ajar], step.entry
+      assert_raises(ArgumentError) do
+        @chart.resolve(%i[closed], from: :closed, to: :open, history: elsewhere)
+      end
+      assert_raises(ArgumentError) { @chart.enter(:open, history: elsewhere) }
     end
   end
 end

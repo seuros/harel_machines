@@ -48,8 +48,20 @@ impl History {
         Ok(rb_self)
     }
 
-    pub fn children(&self) -> Ref<'_, [Option<StateId>]> {
-        Ref::map(self.children.borrow(), Vec::as_slice)
+    /// What the chart it was recorded on should restore.
+    ///
+    /// # Errors
+    ///
+    /// `ArgumentError` if it was recorded on another chart, whose state
+    /// numbering means nothing here.
+    pub fn held(&self, ruby: &Ruby, chart: &Chart) -> Result<Ref<'_, [Option<StateId>]>, Error> {
+        if !Arc::ptr_eq(&self.names, &chart.names()) {
+            return Err(Error::new(
+                ruby.exception_arg_error(),
+                "history was recorded on another chart",
+            ));
+        }
+        Ok(Ref::map(self.children.borrow(), Vec::as_slice))
     }
 
     fn inspect(&self) -> String {
