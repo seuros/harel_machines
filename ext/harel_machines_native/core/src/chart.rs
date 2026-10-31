@@ -382,6 +382,10 @@ impl<const STATES: usize> Chart<STATES> {
             cursor = self.parent(cursor).ok_or(Error::NoCommonAncestor)?;
         }
 
+        if upward.len() > 0 && matches!(self.state(domain).composition, Composition::Parallel) {
+            self.descend_siblings(domain, upward.get(upward.len() - 1), last_active, entry)?;
+        }
+
         let mut remaining = upward.len();
         while remaining > 0 {
             remaining -= 1;

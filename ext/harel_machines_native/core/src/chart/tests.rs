@@ -339,3 +339,13 @@ fn targeting_one_region_still_activates_the_others() -> Result<(), Error> {
     assert_eq!(step.configuration().as_slice(), &[4, 7]);
     Ok(())
 }
+
+#[test]
+fn a_cross_region_transition_keeps_every_region_active() -> Result<(), Error> {
+    let chart = radio(History::None);
+
+    let step = chart.resolve(&configuration(&[4, 7]), 4, 7, TransitionKind::External)?;
+
+    assert_eq!(step.configuration().as_slice(), &[4, 7]);
+    Ok(())
+}
