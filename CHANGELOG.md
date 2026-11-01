@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.2](https://github.com/seuros/harel_machines/compare/harel_machines/v0.1.1...harel_machines/v0.1.2) (2026-11-01)
+
+
+### Bug Fixes
+
+* a republished platform gem is skipped, not fatal ([ad72166](https://github.com/seuros/harel_machines/commit/ad7216674d6401fea3984aa94624ab262057ce6b))
+* enable the rb-sys compiled fallback so new Rubies can build ([2d10131](https://github.com/seuros/harel_machines/commit/2d10131913ebe8d80545a800f698829df506e5fd))
+
 ## [0.1.1](https://github.com/seuros/harel_machines/compare/harel_machines-v0.1.0...harel_machines/v0.1.1) (2026-11-01)
 
 
