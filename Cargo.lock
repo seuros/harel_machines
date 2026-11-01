@@ -83,6 +83,7 @@ version = "0.1.1"
 dependencies = [
  "harel-machines",
  "magnus",
+ "rb-sys",
 ]
 
 [[package]]
