@@ -179,6 +179,12 @@ assert_eq!(external.entry(), &[4]);
 # Ok::<(), harel_machines::Error>(())
 ```
 
+An external transition whose source contains or is its target — a self
+transition, or a transition into the source's own subtree — exits the source
+and everything below it, then enters the source again. It reaches no further:
+a parallel region beside the source keeps the leaves it held. A root is a
+source like any other, so a self transition on it re-enters the whole chart.
+
 ## What this is not
 
 No events, no guards, no callbacks, no transition execution, no persistence and

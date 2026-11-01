@@ -106,6 +106,11 @@ chart.resolve(%i[idle], from: :idle, to: :idle, kind: :internal).exit  # => []
 chart.resolve(%i[idle], from: :idle, to: :idle).exit                   # => [:idle]
 ```
 
+An external transition whose source contains or is its target exits the source
+and everything below it, then enters the source again, and reaches no further:
+a parallel region beside the source keeps the leaves it held. A root is a
+source like any other, so a self transition on one re-enters the whole chart.
+
 ## Parallel regions make the configuration a set
 
 A state whose children are regions is in all of them at once, so what a chart

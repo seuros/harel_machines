@@ -46,8 +46,7 @@ pub const MAX_STATES: usize = 65_535;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     /// The source and the target share no ancestor, so nothing bounds the exit
-    /// and entry sets. Two states in disjoint trees, or an external transition
-    /// from a root to itself.
+    /// and entry sets. Two states in disjoint trees.
     NoCommonAncestor,
     /// A parallel state has no regions, so entering it reaches no leaf.
     EmptyParallel,

@@ -97,6 +97,30 @@ module HarelMachines
       assert_equal %i[idle], step.entry
     end
 
+    def test_an_external_self_transition_on_a_region_leaves_its_siblings_untouched
+      step = @chart.resolve(%i[writing down], from: :left, to: :left)
+
+      assert_equal %i[writing left], step.exit
+      assert_equal %i[left reading], step.entry
+      assert_equal %i[reading down], step.configuration
+    end
+
+    def test_an_external_self_transition_on_a_parallel_state_re_enters_every_region
+      step = @chart.resolve(%i[writing down], from: :running, to: :running)
+
+      assert_equal %i[writing down left right running], step.exit
+      assert_equal %i[running left reading right up], step.entry
+      assert_equal %i[reading up], step.configuration
+    end
+
+    def test_an_external_self_transition_on_the_root_re_enters_the_whole_chart
+      step = @chart.resolve(%i[writing down], from: :machine, to: :machine)
+
+      assert_equal %i[writing down left right running on machine], step.exit
+      assert_equal %i[machine off], step.entry
+      assert_equal %i[off], step.configuration
+    end
+
     def test_a_transition_to_an_ancestor_exits_the_source_but_not_the_ancestor
       step = @chart.resolve(%i[reading up], from: :reading, to: :on)
 

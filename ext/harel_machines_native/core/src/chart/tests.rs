@@ -301,11 +301,23 @@ fn states_in_disjoint_trees_share_no_ancestor() {
 }
 
 #[test]
-fn an_external_transition_cannot_exit_a_root() {
-    assert_eq!(
-        PLAYER.resolve(&configuration(&[1]), 0, 2, TransitionKind::External),
-        Err(Error::NoCommonAncestor)
-    );
+fn an_external_self_transition_on_a_root_re_enters_the_whole_chart() -> Result<(), Error> {
+    let step = PLAYER.resolve(&configuration(&[4]), 0, 0, TransitionKind::External)?;
+
+    assert_eq!(step.exit(), &[4, 2, 0]);
+    assert_eq!(step.entry(), &[0, 1]);
+    assert_eq!(step.configuration().as_slice(), &[1]);
+    Ok(())
+}
+
+#[test]
+fn an_external_transition_from_a_root_into_itself_exits_the_root() -> Result<(), Error> {
+    let step = PLAYER.resolve(&configuration(&[1]), 0, 2, TransitionKind::External)?;
+
+    assert_eq!(step.exit(), &[1, 0]);
+    assert_eq!(step.entry(), &[0, 2, 3]);
+    assert_eq!(step.configuration().as_slice(), &[3]);
+    Ok(())
 }
 
 #[test]
@@ -337,6 +349,41 @@ fn targeting_one_region_still_activates_the_others() -> Result<(), Error> {
 
     assert_eq!(step.entry(), &[2, 3, 4, 6, 7]);
     assert_eq!(step.configuration().as_slice(), &[4, 7]);
+    Ok(())
+}
+
+#[test]
+fn an_external_self_transition_on_a_region_leaves_its_siblings_untouched() -> Result<(), Error> {
+    let chart = radio(History::None);
+
+    let step = chart.resolve(&configuration(&[5, 8]), 6, 6, TransitionKind::External)?;
+
+    assert_eq!(step.exit(), &[8, 6]);
+    assert_eq!(step.entry(), &[6, 7]);
+    assert_eq!(step.configuration().as_slice(), &[5, 7]);
+    Ok(())
+}
+
+#[test]
+fn an_external_self_transition_on_a_parallel_state_re_enters_every_region() -> Result<(), Error> {
+    let chart = radio(History::None);
+
+    let step = chart.resolve(&configuration(&[5, 8]), 2, 2, TransitionKind::External)?;
+
+    assert_eq!(step.exit(), &[5, 8, 3, 6, 2]);
+    assert_eq!(step.entry(), &[2, 3, 4, 6, 7]);
+    assert_eq!(step.configuration().as_slice(), &[4, 7]);
+    Ok(())
+}
+
+#[test]
+fn an_external_self_transition_on_a_compound_state_re_enters_its_initial_child() -> Result<(), Error>
+{
+    let step = PLAYER.resolve(&configuration(&[4]), 2, 2, TransitionKind::External)?;
+
+    assert_eq!(step.exit(), &[4, 2]);
+    assert_eq!(step.entry(), &[2, 3]);
+    assert_eq!(step.configuration().as_slice(), &[3]);
     Ok(())
 }
 

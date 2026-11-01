@@ -96,6 +96,18 @@ impl Restore {
     }
 }
 
+/// What a transition stays inside of.
+///
+/// Nothing above `boundary` is touched, and nothing outside the branches the
+/// entry path runs through. The boundary itself is left and entered again only
+/// when `reentered` is set, which is what keeps a sibling region out of an
+/// external self-transition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Domain {
+    boundary: StateId,
+    reentered: bool,
+}
+
 /// A tree of `STATES` states, addressed by [`StateId`].
 ///
 /// Every state index must be below `STATES` and the parent links must form a
@@ -263,10 +275,16 @@ impl<const STATES: usize> Chart<STATES> {
     /// Composite states on the way down are entered at their initial child; see
     /// [`Chart::resolve_with_history`] to restore what they last held instead.
     ///
+    /// The least common ancestor of source and target bounds both sets: nothing
+    /// above it is touched, and a region it does not contain is left as it is.
+    /// An external transition whose source is that ancestor — a self-transition,
+    /// or a transition into the source's own subtree — exits and re-enters the
+    /// source itself, and no more than that, so its sibling regions keep the
+    /// leaves they held. A root is a source like any other.
+    ///
     /// # Errors
     ///
-    /// [`Error::NoCommonAncestor`] if source and target sit in disjoint trees,
-    /// or an external transition leaves a root for itself.
+    /// [`Error::NoCommonAncestor`] if source and target sit in disjoint trees.
     /// [`Error::EmptyParallel`] if a parallel state on the way down has no
     /// regions. [`Error::NotATree`] if a walk visits more states than the chart
     /// holds.
@@ -298,7 +316,7 @@ impl<const STATES: usize> Chart<STATES> {
         kind: TransitionKind,
         last_active: &LastActive<STATES>,
     ) -> Result<Transition<STATES>, Error> {
-        let domain = self.exit_domain(source, target, kind)?;
+        let domain = self.transition_domain(source, target, kind)?;
 
         let mut exit = Buffer::new();
         self.collect_exits(configuration, domain, &mut exit)?;
@@ -309,38 +327,41 @@ impl<const STATES: usize> Chart<STATES> {
         Ok(self.settle(exit, entry, configuration))
     }
 
-    /// The innermost state the transition stays inside of.
-    fn exit_domain(
+    /// The innermost state the transition stays inside of, and whether that
+    /// state is itself left and entered again.
+    fn transition_domain(
         &self,
         source: StateId,
         target: StateId,
         kind: TransitionKind,
-    ) -> Result<StateId, Error> {
-        let enclosing = self.least_common_ancestor(source, target)?;
-        match kind {
-            TransitionKind::External if enclosing == source => {
-                self.parent(source).ok_or(Error::NoCommonAncestor)
-            }
-            _ => Ok(enclosing),
-        }
+    ) -> Result<Domain, Error> {
+        let boundary = self.least_common_ancestor(source, target)?;
+        Ok(Domain {
+            boundary,
+            reentered: kind == TransitionKind::External && boundary == source,
+        })
     }
 
-    /// Every active state the domain contains, innermost first.
+    /// Every active state the domain contains, innermost first, and the
+    /// boundary last when the transition leaves it too.
     fn collect_exits(
         &self,
         configuration: &Configuration<STATES>,
-        domain: StateId,
+        domain: Domain,
         exit: &mut Buffer<STATES>,
     ) -> Result<(), Error> {
         for &leaf in configuration {
-            if !self.is_ancestor(domain, leaf)? {
+            if !self.is_ancestor(domain.boundary, leaf)? {
                 continue;
             }
             let mut cursor = leaf;
-            while cursor != domain && !exit.contains(cursor) {
+            while cursor != domain.boundary && !exit.contains(cursor) {
                 exit.push(cursor)?;
                 cursor = self.parent(cursor).ok_or(Error::NotATree)?;
             }
+        }
+        if domain.reentered {
+            exit.push(domain.boundary)?;
         }
         self.order_innermost_first(exit)
     }
@@ -366,23 +387,27 @@ impl<const STATES: usize> Chart<STATES> {
         Ok(())
     }
 
-    /// The named path from below the domain down to the target, outermost
-    /// first, then whatever the target contains.
+    /// The named path from the domain down to the target, outermost first, then
+    /// whatever the target contains. The boundary leads the entry set when the
+    /// transition left it too.
     fn collect_entries(
         &self,
-        domain: StateId,
+        domain: Domain,
         target: StateId,
         last_active: &LastActive<STATES>,
         entry: &mut Buffer<STATES>,
     ) -> Result<(), Error> {
         let mut path = Buffer::<STATES>::new();
         let mut cursor = target;
-        while cursor != domain {
+        while cursor != domain.boundary {
             path.push(cursor)?;
             cursor = self.parent(cursor).ok_or(Error::NoCommonAncestor)?;
         }
 
-        self.descend_along(domain, &path, Restore::Initial, last_active, entry)
+        if domain.reentered {
+            entry.push(domain.boundary)?;
+        }
+        self.descend_along(domain.boundary, &path, Restore::Initial, last_active, entry)
     }
 
     /// Descends from `state`, taking the child on `path` where there is one
