@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.1.1](https://github.com/seuros/harel_machines/compare/harel_machines-v0.1.0...harel_machines/v0.1.1) (2026-11-01)
+
+
+### Features
+
+* pass a rubygems OTP through the environment ([d610ea6](https://github.com/seuros/harel_machines/commit/d610ea630c8af48342b86a4000052afdecd4e633))
+* Ruby gem and magnus FFI for chart resolution ([8a6da13](https://github.com/seuros/harel_machines/commit/8a6da130d0181db588f7906fd511c350ef32c85d))
+* statechart hierarchy resolution ([5f37158](https://github.com/seuros/harel_machines/commit/5f37158accd85760fa148b003937c82258a946f9))
+
+
+### Bug Fixes
+
+* a cross-region transition left a parallel region empty ([80ffdc3](https://github.com/seuros/harel_machines/commit/80ffdc3e609cf8f835aaef7d835c48b11a2e4617))
+* a source install can build, and a failed gem push fails the release ([95a6eab](https://github.com/seuros/harel_machines/commit/95a6eab5231bb5069c7b4ef826cf35d3ba9ad7c4))
+* an external self-transition no longer resets a sibling region ([3e487ce](https://github.com/seuros/harel_machines/commit/3e487cef4dd02cb0a3c26c22a9cc8614b03969bc))
+* collect the built gems whatever depth the download puts them at ([0281ea9](https://github.com/seuros/harel_machines/commit/0281ea9743a63cd907451a72b00142f1d15977c6))
+* entering through a parallel ancestor activates every region ([5296c70](https://github.com/seuros/harel_machines/commit/5296c702d607985e3de5bb6cfffc9a7f22022cb0))
+* entry order, duplicate names, and children under an atomic state ([b7e68bc](https://github.com/seuros/harel_machines/commit/b7e68bcf4d1e8ceed757fc192b7b39f6c9ac9917))
+* refuse a compound state whose initial is not its child ([3120e48](https://github.com/seuros/harel_machines/commit/3120e486d5a3e0bc4ff345ef6adfe35ea62f1872))
+* refuse a history recorded on another chart ([eb27f4e](https://github.com/seuros/harel_machines/commit/eb27f4e954aa88272a43a476ba8f3abbb0ee20e4))
+* ship the core's test files so the packaged crate builds ([62d1e3f](https://github.com/seuros/harel_machines/commit/62d1e3fa8c1c530a145cdc43e211aa6dd139ecdd))
+* the release tag carries the gem name, and the gate uses the aggregate output ([eb17b76](https://github.com/seuros/harel_machines/commit/eb17b76fe7204935c1b73633f4d603742e899c4e))
+
 ## 0.1.0
 
 - Initial release.
