@@ -262,7 +262,8 @@ impl<const STATES: usize> Chart<STATES> {
     ) -> Result<Transition<STATES>, Error> {
         let mut entry = Buffer::new();
         entry.push(state)?;
-        self.descend(state, Restore::Initial, last_active, &mut entry)?;
+        let no_path = Buffer::new();
+        self.descend_along(state, &no_path, Restore::Initial, last_active, &mut entry)?;
         Ok(self.settle(Buffer::new(), entry, &Configuration::new()))
     }
 
@@ -413,6 +414,10 @@ impl<const STATES: usize> Chart<STATES> {
     /// Descends from `state`, taking the child on `path` where there is one
     /// and the default otherwise, so a region's subtree stays contiguous and
     /// regions keep their declared order whichever descendant is targeted.
+    ///
+    /// Entering a composite state means entering one of its children, so entry
+    /// keeps going until every branch it opened ends at a leaf. An empty `path`
+    /// descends through initial children and history alone.
     fn descend_along(
         &self,
         state: StateId,
@@ -467,47 +472,6 @@ impl<const STATES: usize> Chart<STATES> {
             index += 1;
         }
         None
-    }
-
-    /// Entering a composite state means entering one of its children, so entry
-    /// keeps going until every branch it opened ends at a leaf.
-    fn descend(
-        &self,
-        state: StateId,
-        inherited: Restore,
-        last_active: &LastActive<STATES>,
-        entry: &mut Buffer<STATES>,
-    ) -> Result<(), Error> {
-        let restore = inherited.upgraded_by(self.state(state).history);
-        match self.state(state).composition {
-            Composition::Atomic => Ok(()),
-            Composition::Compound { initial } => {
-                let (child, below) = match (restore, last_active.last_child(state)) {
-                    (Restore::Subtree, Some(child)) => (child, Restore::Subtree),
-                    (Restore::Child, Some(child)) => (child, Restore::Initial),
-                    _ => (initial, Restore::Initial),
-                };
-                entry.push(child)?;
-                self.descend(child, below, last_active, entry)
-            }
-            Composition::Parallel => {
-                let mut region: StateId = 0;
-                let mut entered = false;
-                while usize::from(region) < STATES {
-                    if self.parent(region) == Some(state) {
-                        entered = true;
-                        entry.push(region)?;
-                        self.descend(region, restore, last_active, entry)?;
-                    }
-                    region += 1;
-                }
-                if entered {
-                    Ok(())
-                } else {
-                    Err(Error::EmptyParallel)
-                }
-            }
-        }
     }
 
     /// The leaves left active once the exit set is gone and the entry set is
