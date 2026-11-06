@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.3](https://github.com/seuros/harel_machines/compare/harel_machines/v0.1.2...harel_machines/v0.1.3) (2026-11-06)
+
+
+### Bug Fixes
+
+* drop descend in favor of descend_along ([0db2955](https://github.com/seuros/harel_machines/commit/0db29552c6a65812741c302e28be91e23b1efbf0))
+* keep test modules out of the packaged crate ([b0c1029](https://github.com/seuros/harel_machines/commit/b0c1029211aace799829695c5091d2663d8aba66))
+
 ## [0.1.2](https://github.com/seuros/harel_machines/compare/harel_machines/v0.1.1...harel_machines/v0.1.2) (2026-11-01)
 
 
