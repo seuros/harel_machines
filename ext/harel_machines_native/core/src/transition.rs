@@ -23,6 +23,8 @@ pub enum TransitionKind {
 /// `exit` runs innermost first, so a child is left before the parent that
 /// contains it. `entry` runs outermost first, so a parent is joined before the
 /// child it contains. `configuration` is the active leaf set that results.
+///
+/// Only a [`Chart`](crate::Chart) builds one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Transition<const STATES: usize> {
     exit: Buffer<STATES>,

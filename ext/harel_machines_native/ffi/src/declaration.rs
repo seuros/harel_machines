@@ -1,18 +1,14 @@
 //! `HarelMachines::Chart::Declaration`: the states a chart is built from.
-
-use std::borrow::Cow;
 use std::cell::RefCell;
 
 use harel_machines::{History, State};
 use magnus::scan_args::{get_kwargs, scan_args};
-use magnus::{Error, RClass, RHash, Ruby, Symbol, Value, method, prelude::*};
+use magnus::typed_data::Obj;
+use magnus::{Error, RClass, RHash, Ruby, Value, method, prelude::*};
+use matryona_machines::ruby::Symbols;
 
+use crate::convert::{Histories, name};
 use crate::names::Names;
-
-/// Restores the child a composite state last held.
-const SHALLOW: &str = "shallow";
-/// Restores the whole configuration a composite state last held.
-const DEEP: &str = "deep";
 
 /// What a declared state's children mean, with its initial child still named.
 enum Composition {
@@ -29,41 +25,28 @@ struct Declared {
     history: History,
 }
 
-/// The states a chart is built from, in declaration order.
+/// The states a chart is built from, in declaration order. Only
+/// `Chart.build` makes one, and hands it to its block.
 #[magnus::wrap(class = "HarelMachines::Chart::Declaration", free_immediately, size)]
 pub struct Declaration(RefCell<Vec<Declared>>);
 
-fn history(ruby: &Ruby, name: Option<Symbol>) -> Result<History, Error> {
-    let name = name.map(Symbol::name).transpose()?;
-    match name.as_deref() {
-        None => Ok(History::None),
-        Some(SHALLOW) => Ok(History::Shallow),
-        Some(DEEP) => Ok(History::Deep),
-        Some(other) => Err(Error::new(
-            ruby.exception_arg_error(),
-            format!("unknown history: :{other}, expected :{SHALLOW} or :{DEEP}"),
-        )),
+/// The positional name and the keyword Hash of a declaration call.
+fn split(args: &[Value]) -> Result<(Value, RHash), Error> {
+    let args = scan_args::<(Value,), (), (), (), RHash, ()>(args)?;
+    Ok((args.required.0, args.keywords))
+}
+
+/// `parent:` as given: `nil` for the root, otherwise a state's name.
+fn parent(ruby: &Ruby, value: Value) -> Result<Option<String>, Error> {
+    if value.is_nil() {
+        return Ok(None);
     }
+    name(ruby, value, "parent").map(Some)
 }
 
-fn not_a_child(ruby: &Ruby, compound: &str, initial: &str) -> Error {
-    Error::new(
-        ruby.exception_arg_error(),
-        format!("initial state :{initial} is not a child of :{compound}"),
-    )
-}
-
-fn atomic_parent(ruby: &Ruby, parent: &str, child: &str) -> Error {
-    Error::new(
-        ruby.exception_arg_error(),
-        format!("atomic state :{parent} cannot contain :{child}, declare it compound or parallel"),
-    )
-}
-
-impl Default for Declaration {
-    fn default() -> Self {
-        Self::new()
-    }
+/// `history:` as given, `:none` when it is left out.
+fn history(ruby: &Ruby, value: Option<Value>) -> Result<History, Error> {
+    value.map_or(Ok(History::None), |value| Histories::parse(ruby, value))
 }
 
 impl Declaration {
@@ -71,118 +54,113 @@ impl Declaration {
         Self(RefCell::new(Vec::new()))
     }
 
-    /// A leaf.
-    fn state(&self, args: &[Value]) -> Result<(), Error> {
-        let args = scan_args::<(Symbol,), (), (), (), RHash, ()>(args)?;
-        let (parent,) =
-            get_kwargs::<_, (), (Option<Symbol>,), ()>(args.keywords, &[], &["parent"])?.optional;
-        self.push(args.required.0, parent, Composition::Atomic, History::None)
+    /// `atomic(name, parent:)`: a leaf.
+    fn atomic(ruby: &Ruby, this: Obj<Self>, args: &[Value]) -> Result<(), Error> {
+        this.check_frozen()?;
+        let (state, keywords) = split(args)?;
+        let (parent_value,) =
+            get_kwargs::<_, (Value,), (), ()>(keywords, &["parent"], &[])?.required;
+        let state = name(ruby, state, "name")?;
+        let parent = parent(ruby, parent_value)?;
+        Self::push(
+            this,
+            ruby,
+            state,
+            parent,
+            Composition::Atomic,
+            History::None,
+        )
     }
 
-    /// A state with one child active at a time.
-    fn compound(ruby: &Ruby, rb_self: &Self, args: &[Value]) -> Result<(), Error> {
-        let args = scan_args::<(Symbol,), (), (), (), RHash, ()>(args)?;
-        let keywords = get_kwargs::<_, (Symbol,), (Option<Symbol>, Option<Symbol>), ()>(
-            args.keywords,
-            &["initial"],
-            &["parent", "history"],
+    /// `compound(name, parent:, initial:, history: :none)`: one child active
+    /// at a time.
+    fn compound(ruby: &Ruby, this: Obj<Self>, args: &[Value]) -> Result<(), Error> {
+        this.check_frozen()?;
+        let (state, keywords) = split(args)?;
+        let keywords = get_kwargs::<_, (Value, Value), (Option<Value>,), ()>(
+            keywords,
+            &["parent", "initial"],
+            &["history"],
         )?;
-        let (initial,) = keywords.required;
-        let (parent, marker) = keywords.optional;
-        rb_self.push(
-            args.required.0,
+        let (parent_value, initial) = keywords.required;
+        let state = name(ruby, state, "name")?;
+        let parent = parent(ruby, parent_value)?;
+        let initial = name(ruby, initial, "initial")?;
+        let history = history(ruby, keywords.optional.0)?;
+        Self::push(
+            this,
+            ruby,
+            state,
             parent,
-            Composition::Compound {
-                initial: initial.name()?.into_owned(),
-            },
-            history(ruby, marker)?,
+            Composition::Compound { initial },
+            history,
         )
     }
 
-    /// A state whose children are regions, all active at once.
-    fn parallel(ruby: &Ruby, rb_self: &Self, args: &[Value]) -> Result<(), Error> {
-        let args = scan_args::<(Symbol,), (), (), (), RHash, ()>(args)?;
-        let (parent, marker) = get_kwargs::<_, (), (Option<Symbol>, Option<Symbol>), ()>(
-            args.keywords,
-            &[],
-            &["parent", "history"],
-        )?
-        .optional;
-        rb_self.push(
-            args.required.0,
-            parent,
-            Composition::Parallel,
-            history(ruby, marker)?,
-        )
+    /// `parallel(name, parent:, history: :none)`: every child a region, all
+    /// active at once.
+    fn parallel(ruby: &Ruby, this: Obj<Self>, args: &[Value]) -> Result<(), Error> {
+        this.check_frozen()?;
+        let (state, keywords) = split(args)?;
+        let keywords =
+            get_kwargs::<_, (Value,), (Option<Value>,), ()>(keywords, &["parent"], &["history"])?;
+        let state = name(ruby, state, "name")?;
+        let parent = parent(ruby, keywords.required.0)?;
+        let history = history(ruby, keywords.optional.0)?;
+        Self::push(this, ruby, state, parent, Composition::Parallel, history)
     }
 
+    /// Files a state once every argument was read, checking frozen again
+    /// first: whatever reading ran, the receiver is still mutable.
     fn push(
-        &self,
-        name: Symbol,
-        parent: Option<Symbol>,
+        this: Obj<Self>,
+        ruby: &Ruby,
+        name: String,
+        parent: Option<String>,
         composition: Composition,
         history: History,
     ) -> Result<(), Error> {
-        self.0.borrow_mut().push(Declared {
-            name: name.name()?.into_owned(),
-            parent: parent
-                .map(|parent| parent.name().map(Cow::into_owned))
-                .transpose()?,
+        this.check_frozen()?;
+        let mut declared = this
+            .0
+            .try_borrow_mut()
+            .map_err(|_| Error::new(ruby.exception_runtime_error(), "declared during a build"))?;
+        declared.push(Declared {
+            name,
+            parent,
             composition,
             history,
         });
         Ok(())
     }
 
-    /// The declared states as the core's tree, and the names it knows them by.
+    /// The declared states as the core's states, and the names it knows them
+    /// by.
     ///
     /// # Errors
     ///
-    /// `ArgumentError` if a parent or an initial child names a state that was
-    /// never declared, if an initial child is not a child of the compound
-    /// state that names it, or if an atomic state was given children.
+    /// `RangeError` if a name is declared twice, or a parent or an initial
+    /// child names a state that was never declared.
     pub fn resolve(&self, ruby: &Ruby) -> Result<(Names, Vec<State>), Error> {
-        let declared = self.0.borrow();
+        let declared = self
+            .0
+            .try_borrow()
+            .map_err(|_| Error::new(ruby.exception_runtime_error(), "declared during a build"))?;
         let names = Names::new(
             ruby,
             declared.iter().map(|state| state.name.clone()).collect(),
         )?;
-        let mut parents = Vec::with_capacity(declared.len());
-        for state in declared.iter() {
-            parents.push(
-                state
-                    .parent
-                    .as_deref()
-                    .map(|parent| names.id(ruby, parent))
-                    .transpose()?,
-            );
-        }
-        let mut firstborn = vec![None; declared.len()];
-        for (parent, id) in parents.iter().zip(names.ids()) {
-            if let Some(parent) = *parent {
-                firstborn[usize::from(parent)].get_or_insert(id);
-            }
-        }
         let mut states = Vec::with_capacity(declared.len());
-        for (state, id) in declared.iter().zip(names.ids()) {
-            let parent = parents[usize::from(id)];
+        for state in declared.iter() {
+            let parent = state
+                .parent
+                .as_deref()
+                .map(|parent| names.id(ruby, parent))
+                .transpose()?;
             let core = match &state.composition {
-                Composition::Atomic => {
-                    if let Some(child) = firstborn[usize::from(id)] {
-                        return Err(atomic_parent(
-                            ruby,
-                            &state.name,
-                            &declared[usize::from(child)].name,
-                        ));
-                    }
-                    State::atomic(parent)
-                }
+                Composition::Atomic => State::atomic(parent),
                 Composition::Compound { initial } => {
-                    let child = names.id(ruby, initial)?;
-                    if parents[usize::from(child)] != Some(id) {
-                        return Err(not_a_child(ruby, &state.name, initial));
-                    }
-                    State::compound(parent, child)
+                    State::compound(parent, names.id(ruby, initial)?)
                 }
                 Composition::Parallel => State::parallel(parent),
             };
@@ -192,10 +170,11 @@ impl Declaration {
     }
 }
 
-pub fn define(ruby: &Ruby, chart: RClass) -> Result<(), Error> {
+pub fn define(chart: RClass, ruby: &Ruby) -> Result<RClass, Error> {
     let class = chart.define_class("Declaration", ruby.class_object())?;
-    class.define_method("state", method!(Declaration::state, -1))?;
+    class.undef_default_alloc_func();
+    class.define_method("atomic", method!(Declaration::atomic, -1))?;
     class.define_method("compound", method!(Declaration::compound, -1))?;
     class.define_method("parallel", method!(Declaration::parallel, -1))?;
-    Ok(())
+    Ok(class)
 }

@@ -1,9 +1,10 @@
 //! The names a chart's states were declared with.
-
 use std::collections::HashMap;
 
 use harel_machines::StateId;
-use magnus::{Error, RArray, Ruby, Symbol};
+use magnus::{Error, RArray, Ruby, Symbol, Value, prelude::*};
+
+use crate::convert::{name, range};
 
 /// A chart's state names in declaration order and the index of each.
 pub struct Names {
@@ -12,77 +13,64 @@ pub struct Names {
 }
 
 impl Names {
+    /// The names, each given once.
+    ///
     /// # Errors
     ///
-    /// `ArgumentError` if a name is declared twice: the duplicate would be
+    /// `RangeError` if a name is declared twice: the duplicate would be
     /// unreachable and every lookup would resolve to the later index.
     pub fn new(ruby: &Ruby, order: Vec<String>) -> Result<Self, Error> {
         let mut ids = HashMap::with_capacity(order.len());
-        for (name, id) in order.iter().zip(0..) {
-            if ids.insert(name.clone(), id).is_some() {
-                return Err(Error::new(
-                    ruby.exception_arg_error(),
-                    format!("state {name} is declared twice"),
-                ));
+        for (state, id) in order.iter().zip(0..) {
+            if ids.insert(state.clone(), id).is_some() {
+                return Err(range(ruby, format!("state :{state} is declared twice")));
             }
         }
         Ok(Self { order, ids })
     }
 
-    /// The index of the state called `name`.
+    /// The index of the state called `state`.
     ///
     /// # Errors
     ///
-    /// `ArgumentError` if the chart holds no state of that name.
-    pub fn id(&self, ruby: &Ruby, name: &str) -> Result<StateId, Error> {
-        self.ids.get(name).copied().ok_or_else(|| {
-            Error::new(
-                ruby.exception_arg_error(),
-                format!("unknown state: :{name}"),
-            )
-        })
+    /// `RangeError` if the chart holds no state of that name.
+    pub fn id(&self, ruby: &Ruby, state: &str) -> Result<StateId, Error> {
+        self.ids
+            .get(state)
+            .copied()
+            .ok_or_else(|| range(ruby, format!("unknown state: :{state}")))
     }
 
-    /// The index of the state `symbol` names.
+    /// The index of the state the Symbol `value` names.
     ///
     /// # Errors
     ///
-    /// As [`Names::id`].
-    pub fn symbol_id(&self, ruby: &Ruby, symbol: Symbol) -> Result<StateId, Error> {
-        self.id(ruby, &symbol.name()?)
+    /// `TypeError` for anything but a Symbol, `RangeError` for a Symbol no
+    /// state of the chart was declared with.
+    pub fn lookup(&self, ruby: &Ruby, value: Value, what: &str) -> Result<StateId, Error> {
+        self.id(ruby, &name(ruby, value, what)?)
     }
 
-    pub fn symbol(&self, ruby: &Ruby, id: StateId) -> Symbol {
-        ruby.to_symbol(&self.order[usize::from(id)])
+    /// The Symbol of the state at `id`, or `None` for an index the chart
+    /// does not hold, which only a broken core could answer.
+    pub fn symbol(&self, ruby: &Ruby, id: StateId) -> Option<Symbol> {
+        self.order
+            .get(usize::from(id))
+            .map(|state| ruby.to_symbol(state))
     }
 
-    /// # Errors
-    ///
-    /// `FrozenError` never: the array is freshly allocated.
-    pub fn symbols(&self, ruby: &Ruby, ids: &[StateId]) -> Result<RArray, Error> {
-        let array = ruby.ary_new_capa(ids.len());
-        for &id in ids {
-            array.push(self.symbol(ruby, id))?;
-        }
-        Ok(array)
+    /// The states at `ids` as a frozen Array of Symbols.
+    pub fn symbols(&self, ruby: &Ruby, ids: &[StateId]) -> RArray {
+        let array = ruby.ary_from_iter(ids.iter().filter_map(|&id| self.symbol(ruby, id)));
+        array.freeze();
+        array
     }
 
-    /// Every state name, in declaration order.
-    ///
-    /// # Errors
-    ///
-    /// As [`Names::symbols`].
-    pub fn all(&self, ruby: &Ruby) -> Result<RArray, Error> {
-        let array = ruby.ary_new_capa(self.order.len());
-        for name in &self.order {
-            array.push(ruby.to_symbol(name))?;
-        }
-        Ok(array)
-    }
-
-    /// Every state index, in declaration order.
-    pub fn ids(&self) -> impl Iterator<Item = StateId> {
-        (0..).take(self.order.len())
+    /// Every state name, in declaration order, as a frozen Array.
+    pub fn all(&self, ruby: &Ruby) -> RArray {
+        let array = ruby.ary_from_iter(self.order.iter().map(|state| ruby.to_symbol(state)));
+        array.freeze();
+        array
     }
 
     pub const fn len(&self) -> usize {

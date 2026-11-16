@@ -1,6 +1,6 @@
-# Statechart hierarchy: which states a transition exits and which it enters.
-# Every class here is defined by the native extension, which binds the
-# `harel-machines` crate.
+# Statechart hierarchy: which states a transition exits and which it enters,
+# over one checked state tree. Every class here except Transition is defined
+# by the native extension, which binds the `harel-machines` crate.
 #
 # Nothing here fires an event, evaluates a guard or runs a callback. The caller
 # has already chosen the transition and asks only what the tree does about it.
@@ -8,53 +8,57 @@ module HarelMachines
   VERSION: String
 
   # The state counts a chart is monomorphised for. A chart of more states than
-  # the largest raises `ArgumentError`.
+  # the largest raises `RangeError`.
   SHAPES: Array[Integer]
 
-  # What re-entering a composite state restores: the child it last held, or the
-  # whole configuration under it.
-  type history_marker = :shallow | :deep
+  # Every refusal Symbol, the snake case of the core's `Refusal` variants.
+  # Ruby answers `:inactive` (Chart#resolve) and `:invalid_history`
+  # (History#record); the other two can only come from indices or histories
+  # this binding never passes.
+  REFUSALS: Array[refusal]
+
+  type refusal = :unknown_state | :invalid_configuration | :invalid_history | :inactive
+
+  # What re-entering a compound state restores: nothing, the child it last
+  # held, or the whole configuration under it.
+  type history_marker = :none | :shallow | :deep
 
   # Whether a transition leaves the state it starts from. The two only differ
   # when the source contains the target or is the target.
   type transition_kind = :external | :internal
 
-  # What a malformed tree cannot answer.
-  class Error < StandardError
-  end
-
-  # Source and target share no ancestor, so nothing bounds the exit and entry
-  # sets.
-  class NoCommonAncestor < Error
-  end
-
-  # A parallel state has no regions, so entering it reaches no leaf.
-  class EmptyParallel < Error
-  end
-
-  # A walk visited more states than the chart holds.
-  class NotATree < Error
-  end
-
-  # The states a transition leaves and joins, and the leaves it settles in.
-  #
-  # `exit` runs innermost first and `entry` outermost first.
+  # The states a transition leaves and joins, and the leaves it settles in,
+  # each a frozen Array. `exit` runs innermost first and `entry` outermost
+  # first. Only a Chart builds one: `new`, `[]` and `with` are gone.
   class Transition < ::Data
     attr_reader exit: Array[Symbol]
     attr_reader entry: Array[Symbol]
     attr_reader configuration: Array[Symbol]
   end
 
-  # An immutable state tree.
+  # An immutable, checked state tree: one root, no cycle, every compound
+  # state's initial child its own, every parallel state with a region, no
+  # atomic state with children or history.
   class Chart
-    # Builds a chart from the states declared in the block. A parent or an
-    # initial child may name a state the block declares later.
-    def self.build: () { (Declaration) -> void } -> instance
+    # Builds a chart from the states the block declares. A parent or an
+    # initial child may name a state declared later. `RangeError` for a name
+    # declared twice or never, more states than SHAPES allows, or a tree the
+    # core refuses.
+    def self.build: () { (Declaration) -> void } -> Chart
 
-    # Every state name, in declaration order.
+    # Every state name, in declaration order, frozen.
     def states: () -> Array[Symbol]
 
-    # How many states contain this one. A root is at depth zero.
+    # How many states the chart holds.
+    def size: () -> Integer
+
+    # The state without a parent.
+    def root: () -> Symbol
+
+    # The state containing this one, or nil for the root.
+    def parent: (Symbol state) -> Symbol?
+
+    # How many states contain this one. The root is at depth zero.
     def depth: (Symbol state) -> Integer
 
     # Whether the first state contains the second. A state does not contain
@@ -64,49 +68,78 @@ module HarelMachines
     # The innermost state that contains or is both of them.
     def least_common_ancestor: (Symbol left, Symbol right) -> Symbol
 
-    # Entering a state from nothing, descending to a leaf in every region it
-    # opens.
-    def enter: (Symbol state, ?history: History?) -> Transition
+    # The leaves, checked as a configuration the chart can be in and answered
+    # in declaration order, frozen. `RangeError` for one it cannot be in.
+    def configuration: (Array[Symbol] leaves) -> Array[Symbol]
 
-    # What a transition from `from:` to `to:` exits and enters, given the
-    # leaves active now.
+    # Entering a state from nothing: every state from the root down to it,
+    # then a leaf in every region it opens.
+    def enter: (Symbol target) -> Transition
+
+    # As #enter, restoring history states from a History of this chart.
+    def enter_with_history: (Symbol target, History history) -> Transition
+
+    # What a transition from `source` to `target` exits and enters, given the
+    # leaves active now (`RangeError` for leaves the chart cannot be in), or
+    # `:inactive` when the source is not active.
     def resolve: (
       Array[Symbol] configuration,
-      from: Symbol,
-      to: Symbol,
-      ?kind: transition_kind,
-      ?history: History?
-    ) -> Transition
+      Symbol source,
+      Symbol target,
+      transition_kind kind
+    ) -> (Transition | refusal)
+
+    # As #resolve, restoring history states from a History of this chart.
+    def resolve_with_history: (
+      Array[Symbol] configuration,
+      Symbol source,
+      Symbol target,
+      transition_kind kind,
+      History history
+    ) -> (Transition | refusal)
 
     def inspect: () -> String
 
-    # The states a chart is built from, in declaration order.
+    # The states a chart is built from, in declaration order. Only
+    # Chart.build makes one.
     class Declaration
-      # A leaf.
-      def state: (Symbol name, ?parent: Symbol?) -> void
+      # A leaf. `parent:` is nil for the root.
+      def atomic: (Symbol name, parent: Symbol?) -> nil
 
       # A state with one child active at a time, entered at `initial:` unless
       # history or the target selects another child.
       def compound: (
         Symbol name,
+        parent: Symbol?,
         initial: Symbol,
-        ?parent: Symbol?,
-        ?history: history_marker?
-      ) -> void
+        ?history: history_marker
+      ) -> nil
 
       # A state whose children are regions, all active at once.
-      def parallel: (Symbol name, ?parent: Symbol?, ?history: history_marker?) -> void
+      def parallel: (Symbol name, parent: Symbol?, ?history: history_marker) -> nil
     end
   end
 
-  # The child each composite state of one chart last held.
-  #
-  # Recording is a separate call from resolving.
+  # The child each compound state of one chart last held. Recording is a
+  # separate call from resolving. Native state: not marshalled or copied.
   class History
-    def self.new: (Chart chart) -> instance
+    # Remembers nothing.
+    def self.new: (Chart chart) -> History
 
-    # Files every state the transition exited under the state that contains it.
-    def record: (Transition transition) -> self
+    # The history holding exactly these [state, child] pairs, as #remembered
+    # answers them. `RangeError` for one no transitions over the chart leave.
+    def self.restored: (Chart chart, Array[[Symbol, Symbol]] remembered) -> History
+
+    # Files every state the transition exited under the compound state that
+    # contains it: `:recorded`, or `:invalid_history` for an exit set no
+    # transition of this chart has.
+    def record: (Transition transition) -> (:recorded | refusal)
+
+    # Every [state, child] pair held, in declaration order of the state.
+    def remembered: () -> Array[[Symbol, Symbol]]
+
+    # The child the state held when it was last exited, or nil.
+    def last_child: (Symbol state) -> Symbol?
 
     def inspect: () -> String
   end

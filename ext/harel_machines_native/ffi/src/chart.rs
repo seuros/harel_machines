@@ -1,222 +1,265 @@
-//! `HarelMachines::Chart`: a state tree, and the transitions resolved over it.
-
+//! `HarelMachines::Chart`: a checked state tree, and the transitions resolved
+//! over it.
 use std::sync::Arc;
 
-use harel_machines::{StateId, TransitionKind};
-use magnus::scan_args::{get_kwargs, scan_args};
+use harel_machines::StateId;
 use magnus::typed_data::Obj;
-use magnus::{Error, RArray, RHash, RModule, Ruby, Symbol, Value, function, method, prelude::*};
+use magnus::{Error, RArray, RClass, Ruby, Symbol, Value, function, method, prelude::*};
+use matryona_machines::ruby::{Symbols, exact_typed};
 
-use crate::declaration::{self, Declaration};
-use crate::history::History;
+use crate::classes::classes;
+use crate::convert::{Kinds, range, reply, states, transition};
+use crate::declaration::Declaration;
 use crate::names::Names;
-use crate::shape::{Resolved, SHAPES, Tree};
-use crate::{chart_error, data};
+use crate::shape::{Resolved, SHAPES, Shape, Unbuilt, build};
 
-/// The source is exited and entered again.
-const EXTERNAL: &str = "external";
-/// The source stays active, and so does everything between it and the target.
-const INTERNAL: &str = "internal";
+/// What a chart is: the core at its shape and the names of its states.
+/// Shared with every `History` of the chart.
+pub struct Inner {
+    pub shape: Box<dyn Shape>,
+    pub names: Names,
+}
 
 /// An immutable state tree and the names its states were declared with.
 #[magnus::wrap(class = "HarelMachines::Chart", free_immediately, size)]
 pub struct Chart {
-    tree: Tree,
-    names: Arc<Names>,
+    pub inner: Arc<Inner>,
 }
 
-fn kind(ruby: &Ruby, name: Option<Symbol>) -> Result<TransitionKind, Error> {
-    let name = name.map(Symbol::name).transpose()?;
-    match name.as_deref() {
-        None | Some(EXTERNAL) => Ok(TransitionKind::External),
-        Some(INTERNAL) => Ok(TransitionKind::Internal),
-        Some(other) => Err(Error::new(
-            ruby.exception_arg_error(),
-            format!("unknown transition kind: :{other}, expected :{EXTERNAL} or :{INTERNAL}"),
-        )),
-    }
-}
-
-fn unsupported(ruby: &Ruby, count: usize) -> Error {
-    Error::new(
-        ruby.exception_arg_error(),
-        format!("a chart of {count} states is not supported, the shapes are {SHAPES:?}"),
-    )
+/// The chart a Ruby value is: exactly a `HarelMachines::Chart`, `TypeError`
+/// for anything else, a subclass included.
+pub fn chart(ruby: &Ruby, value: Value) -> Result<Obj<Chart>, Error> {
+    let class = classes(ruby)?.chart.get(ruby);
+    exact_typed::<Chart>(ruby, value, class, "expected a HarelMachines::Chart")
 }
 
 impl Chart {
-    /// Builds a chart from the states declared in the block.
+    /// `Chart.build { |declaration| ... }`.
     ///
     /// # Errors
     ///
-    /// `ArgumentError` if a name is unknown or there are more states than the
-    /// largest shape holds. `LocalJumpError` without a block.
+    /// `LocalJumpError` without a block; `RangeError` for a name declared
+    /// twice, an unknown parent or initial child, more states than the largest
+    /// shape, or states the core refuses as a chart.
     fn build(ruby: &Ruby) -> Result<Self, Error> {
         let declaration = ruby.obj_wrap(Declaration::new());
-        ruby.block_proc()?.call::<_, Value>((declaration,))?;
+        ruby.yield_value::<_, Value>(declaration)?;
         let (names, states) = declaration.resolve(ruby)?;
-        let tree = Tree::new(&states).ok_or_else(|| unsupported(ruby, states.len()))?;
+        let shape = build(&states).map_err(|unbuilt| match unbuilt {
+            Unbuilt::Unsupported => range(
+                ruby,
+                format!(
+                    "a chart of {} states is not supported, the shapes are {SHAPES:?}",
+                    states.len()
+                ),
+            ),
+            Unbuilt::Refused(error) => range(ruby, format!("not a chart: {error}")),
+        })?;
         Ok(Self {
-            tree,
-            names: Arc::new(names),
+            inner: Arc::new(Inner { shape, names }),
         })
     }
 
-    pub fn names(&self) -> Arc<Names> {
-        Arc::clone(&self.names)
+    fn names(&self) -> &Names {
+        &self.inner.names
     }
 
-    /// What contains each state, by index.
-    pub fn parents(&self) -> Vec<Option<StateId>> {
-        self.names.ids().map(|id| self.tree.parent(id)).collect()
+    fn shape(&self) -> &dyn Shape {
+        self.inner.shape.as_ref()
     }
 
-    /// Every state name, in declaration order.
-    ///
-    /// # Errors
-    ///
-    /// `FrozenError` never: the array is freshly allocated.
-    fn states(ruby: &Ruby, rb_self: &Self) -> Result<RArray, Error> {
-        rb_self.names.all(ruby)
+    /// A state's index from its Symbol.
+    fn id(&self, ruby: &Ruby, value: Value, what: &str) -> Result<StateId, Error> {
+        self.names().lookup(ruby, value, what)
     }
 
-    /// How many states contain this one.
-    ///
-    /// # Errors
-    ///
-    /// `ArgumentError` if the state is unknown.
-    fn depth(ruby: &Ruby, rb_self: &Self, state: Symbol) -> Result<usize, Error> {
-        let state = rb_self.names.symbol_id(ruby, state)?;
-        rb_self
-            .tree
-            .depth(state)
-            .map_err(|error| chart_error(ruby, error))
+    /// The state at `id` as its Symbol; an index the chart lacks is a broken
+    /// core, answered as `RangeError` rather than a panic.
+    fn symbol(&self, ruby: &Ruby, id: StateId) -> Result<Symbol, Error> {
+        self.names()
+            .symbol(ruby, id)
+            .ok_or_else(|| range(ruby, "the core answered a state the chart lacks"))
     }
 
-    /// Whether `ancestor` contains `descendant`.
-    ///
-    /// # Errors
-    ///
-    /// `ArgumentError` if either state is unknown.
+    /// A query the chart answers for every state it holds.
+    fn query<T>(ruby: &Ruby, answer: Result<T, harel_machines::Refusal>) -> Result<T, Error> {
+        answer.map_err(|refusal| range(ruby, refusal.to_string()))
+    }
+
+    fn states(ruby: &Ruby, this: &Self) -> RArray {
+        this.names().all(ruby)
+    }
+
+    fn size(&self) -> usize {
+        self.names().len()
+    }
+
+    fn root(ruby: &Ruby, this: &Self) -> Result<Symbol, Error> {
+        this.symbol(ruby, this.shape().root())
+    }
+
+    fn parent(ruby: &Ruby, this: &Self, state: Value) -> Result<Option<Symbol>, Error> {
+        let state = this.id(ruby, state, "state")?;
+        let parent = Self::query(ruby, this.shape().parent(state))?;
+        parent.map(|parent| this.symbol(ruby, parent)).transpose()
+    }
+
+    fn depth(ruby: &Ruby, this: &Self, state: Value) -> Result<usize, Error> {
+        let state = this.id(ruby, state, "state")?;
+        Self::query(ruby, this.shape().depth(state))
+    }
+
     fn ancestor(
         ruby: &Ruby,
-        rb_self: &Self,
-        ancestor: Symbol,
-        descendant: Symbol,
+        this: &Self,
+        ancestor: Value,
+        descendant: Value,
     ) -> Result<bool, Error> {
-        let ancestor = rb_self.names.symbol_id(ruby, ancestor)?;
-        let descendant = rb_self.names.symbol_id(ruby, descendant)?;
-        rb_self
-            .tree
-            .ancestor(ancestor, descendant)
-            .map_err(|error| chart_error(ruby, error))
+        let ancestor = this.id(ruby, ancestor, "ancestor")?;
+        let descendant = this.id(ruby, descendant, "descendant")?;
+        Self::query(ruby, this.shape().is_ancestor(ancestor, descendant))
     }
 
-    /// The innermost state that contains or is both of them.
-    ///
-    /// # Errors
-    ///
-    /// `ArgumentError` if either state is unknown. `NoCommonAncestor` if they
-    /// sit in disjoint trees.
     fn least_common_ancestor(
         ruby: &Ruby,
-        rb_self: &Self,
-        left: Symbol,
-        right: Symbol,
+        this: &Self,
+        left: Value,
+        right: Value,
     ) -> Result<Symbol, Error> {
-        let left = rb_self.names.symbol_id(ruby, left)?;
-        let right = rb_self.names.symbol_id(ruby, right)?;
-        rb_self
-            .tree
-            .least_common_ancestor(left, right)
-            .map(|state| rb_self.names.symbol(ruby, state))
-            .map_err(|error| chart_error(ruby, error))
+        let (left, right) = (this.id(ruby, left, "left")?, this.id(ruby, right, "right")?);
+        let common = Self::query(ruby, this.shape().least_common_ancestor(left, right))?;
+        this.symbol(ruby, common)
     }
 
-    /// Entering `state` from nothing, restoring what `history:` holds.
-    ///
-    /// # Errors
-    ///
-    /// `ArgumentError` if the state is unknown.
-    fn enter(ruby: &Ruby, rb_self: &Self, args: &[Value]) -> Result<Value, Error> {
-        let args = scan_args::<(Symbol,), (), (), (), RHash, ()>(args)?;
-        let (history,) =
-            get_kwargs::<_, (), (Option<Obj<History>>,), ()>(args.keywords, &[], &["history"])?
-                .optional;
-        let state = rb_self.names.symbol_id(ruby, args.required.0)?;
-        let held = history
-            .as_ref()
-            .map(|history| history.held(ruby, rb_self))
-            .transpose()?;
-        let resolved = rb_self
-            .tree
-            .enter(state, held.as_deref().unwrap_or(&[]))
-            .map_err(|error| chart_error(ruby, error))?;
-        rb_self.transition(ruby, &resolved)
+    /// The leaves of `value`, checked as a configuration of this chart:
+    /// `RangeError` for one it cannot be in.
+    fn leaves(&self, ruby: &Ruby, value: Value) -> Result<Vec<StateId>, Error> {
+        let leaves = states(ruby, self.names(), value, "configuration")?;
+        self.shape()
+            .configuration(&leaves)
+            .map_err(|_| range(ruby, "configuration is not one this chart can be in"))
     }
 
-    /// Which states a transition from `from:` to `to:` exits and enters.
-    ///
-    /// # Errors
-    ///
-    /// `ArgumentError` if a state or the kind is unknown. `NoCommonAncestor` if
-    /// source and target sit in disjoint trees.
-    fn resolve(ruby: &Ruby, rb_self: &Self, args: &[Value]) -> Result<Value, Error> {
-        let args = scan_args::<(RArray,), (), (), (), RHash, ()>(args)?;
-        let keywords = get_kwargs::<_, (Symbol, Symbol), (Option<Symbol>, Option<Obj<History>>), ()>(
-            args.keywords,
-            &["from", "to"],
-            &["kind", "history"],
-        )?;
-        let (from, to) = keywords.required;
-        let (marker, history) = keywords.optional;
-        let mut leaves = Vec::with_capacity(args.required.0.len());
-        for leaf in args.required.0 {
-            leaves.push(rb_self.names.symbol_id(ruby, Symbol::try_convert(leaf)?)?);
+    /// `configuration(leaves)`: the leaves as the chart holds them, in
+    /// declaration order, frozen.
+    fn configuration(ruby: &Ruby, this: &Self, value: Value) -> Result<RArray, Error> {
+        let leaves = this.leaves(ruby, value)?;
+        Ok(this.names().symbols(ruby, &leaves))
+    }
+
+    /// The answer to a resolution: its `Transition`, or the refusal's Symbol.
+    fn answer(
+        &self,
+        ruby: &Ruby,
+        outcome: Result<Resolved, harel_machines::Refusal>,
+    ) -> Result<Value, Error> {
+        let class = classes(ruby)?.transition.get(ruby);
+        reply(ruby, outcome, |resolved| {
+            transition(ruby, class, self.names(), &resolved)
+        })
+    }
+
+    /// The history `value` holds for this chart: exactly a `History` of this
+    /// chart, `TypeError` for anything else, `RangeError` for another chart's.
+    fn remembered(&self, ruby: &Ruby, value: Value) -> Result<Vec<(StateId, StateId)>, Error> {
+        let history = crate::history::history(ruby, value)?;
+        if !Arc::ptr_eq(&history.chart, &self.inner) {
+            return Err(range(ruby, "history was recorded on another chart"));
         }
-        let held = history
-            .as_ref()
-            .map(|history| history.held(ruby, rb_self))
-            .transpose()?;
-        let resolved = rb_self
-            .tree
-            .resolve(
-                &leaves,
-                rb_self.names.symbol_id(ruby, from)?,
-                rb_self.names.symbol_id(ruby, to)?,
-                kind(ruby, marker)?,
-                held.as_deref().unwrap_or(&[]),
-            )
-            .map_err(|error| chart_error(ruby, error))?;
-        rb_self.transition(ruby, &resolved)
+        history.snapshot(ruby)
     }
 
-    fn transition(&self, ruby: &Ruby, resolved: &Resolved) -> Result<Value, Error> {
-        data::transition(
+    fn enter(ruby: &Ruby, this: &Self, target: Value) -> Result<Value, Error> {
+        let target = this.id(ruby, target, "target")?;
+        this.answer(ruby, this.shape().enter(target, &[]))
+    }
+
+    fn enter_with_history(
+        ruby: &Ruby,
+        this: &Self,
+        target: Value,
+        history: Value,
+    ) -> Result<Value, Error> {
+        let target = this.id(ruby, target, "target")?;
+        let remembered = this.remembered(ruby, history)?;
+        this.answer(ruby, this.shape().enter(target, &remembered))
+    }
+
+    fn resolve(
+        ruby: &Ruby,
+        this: &Self,
+        configuration: Value,
+        source: Value,
+        target: Value,
+        kind: Value,
+    ) -> Result<Value, Error> {
+        Self::resolve_with(ruby, this, [configuration, source, target, kind], None)
+    }
+
+    fn resolve_with_history(
+        ruby: &Ruby,
+        this: &Self,
+        configuration: Value,
+        source: Value,
+        target: Value,
+        kind: Value,
+        history: Value,
+    ) -> Result<Value, Error> {
+        Self::resolve_with(
             ruby,
-            self.names.symbols(ruby, &resolved.exit)?,
-            self.names.symbols(ruby, &resolved.entry)?,
-            self.names.symbols(ruby, &resolved.configuration)?,
+            this,
+            [configuration, source, target, kind],
+            Some(history),
         )
     }
 
+    /// Every argument read in order, then the core asked once.
+    fn resolve_with(
+        ruby: &Ruby,
+        this: &Self,
+        [configuration, source, target, kind]: [Value; 4],
+        history: Option<Value>,
+    ) -> Result<Value, Error> {
+        let leaves = this.leaves(ruby, configuration)?;
+        let source = this.id(ruby, source, "source")?;
+        let target = this.id(ruby, target, "target")?;
+        let kind = Kinds::parse(ruby, kind)?;
+        let remembered = match history {
+            Some(history) => this.remembered(ruby, history)?,
+            None => Vec::new(),
+        };
+        let outcome = this
+            .shape()
+            .resolve(&leaves, source, target, kind, &remembered);
+        this.answer(ruby, outcome)
+    }
+
     fn inspect(&self) -> String {
-        format!("#<HarelMachines::Chart states={}>", self.names.len())
+        format!("#<HarelMachines::Chart states={}>", self.names().len())
     }
 }
 
-pub fn define(ruby: &Ruby, module: RModule) -> Result<(), Error> {
-    let class = module.define_class("Chart", ruby.class_object())?;
+pub fn define(class: RClass) -> Result<(), Error> {
+    class.undef_default_alloc_func();
     class.define_singleton_method("build", function!(Chart::build, 0))?;
     class.define_method("states", method!(Chart::states, 0))?;
+    class.define_method("size", method!(Chart::size, 0))?;
+    class.define_method("root", method!(Chart::root, 0))?;
+    class.define_method("parent", method!(Chart::parent, 1))?;
     class.define_method("depth", method!(Chart::depth, 1))?;
     class.define_method("ancestor?", method!(Chart::ancestor, 2))?;
     class.define_method(
         "least_common_ancestor",
         method!(Chart::least_common_ancestor, 2),
     )?;
-    class.define_method("enter", method!(Chart::enter, -1))?;
-    class.define_method("resolve", method!(Chart::resolve, -1))?;
+    class.define_method("configuration", method!(Chart::configuration, 1))?;
+    class.define_method("enter", method!(Chart::enter, 1))?;
+    class.define_method("enter_with_history", method!(Chart::enter_with_history, 2))?;
+    class.define_method("resolve", method!(Chart::resolve, 4))?;
+    class.define_method(
+        "resolve_with_history",
+        method!(Chart::resolve_with_history, 5),
+    )?;
     class.define_method("inspect", method!(Chart::inspect, 0))?;
-    declaration::define(ruby, class)
+    Ok(())
 }
