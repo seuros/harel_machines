@@ -40,8 +40,34 @@ class SealTest < Minitest::Test
 
     assert_instance_of H::Transition, copy
     assert_equal @leaving, copy
+    assert_predicate copy, :frozen?
+    [copy.exit, copy.entry, copy.configuration].each do |list|
+      assert_predicate list, :frozen?
+      assert_raises(FrozenError) { list << :x }
+    end
     assert_equal :recorded, @history.record(copy)
     assert_equal [%i[door open], %i[open wide], %i[wide free]], @history.remembered
+  end
+
+  # Marshal data written by hand: a Transition dumps as `U`, its class and
+  # its three lists. Dumping the class name and the lists as one pair keeps
+  # their symbol references in one table; the pair's header becomes `U`.
+  def marshalled(fields)
+    "\x04\bU".b + Marshal.dump([:'HarelMachines::Transition', fields]).delete_prefix("\x04\b[\a".b)
+  end
+
+  # Tampered data is checked on the way in: a String where a Symbol belongs,
+  # a state listed twice, a list that is not an Array, the wrong number of
+  # lists.
+  def test_tampered_marshal_data_is_rejected
+    genuine = @chart.enter(:door)
+    assert_equal genuine, Marshal.load(marshalled([genuine.exit, genuine.entry, genuine.configuration]))
+
+    assert_raises(TypeError) { Marshal.load(marshalled([[], ['door'], []])) }
+    assert_raises(RangeError) { Marshal.load(marshalled([[], %i[door door], []])) }
+    assert_raises(TypeError) { Marshal.load(marshalled([[], :door, []])) }
+    assert_raises(TypeError) { Marshal.load(marshalled([[], []])) }
+    assert_raises(TypeError) { Marshal.load(marshalled({ exit: [] })) }
   end
 
   def test_native_objects_are_not_marshalled_or_copied
@@ -58,6 +84,10 @@ class SealTest < Minitest::Test
     assert_raises(TypeError) { @history.record(forge(Class.new(Array).new(%i[wide]))) }
     # Wide exited without the leaf it held: no transition of the door does that.
     assert_equal :invalid_history, @history.record(forge(%i[wide]))
+    # Two children of one compound state were never active together.
+    assert_equal :invalid_history, @history.record(forge(%i[latched free]))
+    # The right states in the wrong order.
+    assert_equal :invalid_history, @history.record(forge(%i[open wide free]))
     assert_empty @history.remembered
   end
 

@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use harel_machines::{History, Refusal, StateId, TransitionKind};
 use magnus::{Error, RArray, RClass, RStruct, Ruby, Symbol, Value, prelude::*};
-use matryona_machines::ruby::{class_name, exact_array_with};
+use matryona_machines::ruby::{class_name, exact_array_n_with, exact_array_with};
 
 use crate::names::Names;
 use crate::shape::Resolved;
@@ -71,6 +71,35 @@ pub fn states(ruby: &Ruby, names: &Names, value: Value, what: &str) -> Result<Ve
         ids.push(names.lookup(ruby, element, what)?);
     }
     Ok(ids)
+}
+
+/// The three lists a marshalled `Transition` is loaded from, checked and
+/// copied: exactly an Array of three exactly-Arrays, each of distinct
+/// Symbols, read natively. Answers a frozen Array of three frozen copies.
+/// `TypeError` for any other shape or a non-Symbol, `RangeError` for a name
+/// listed twice in one list: no transition exits or enters a state twice,
+/// and none settles in a leaf twice.
+pub fn transition_fields(ruby: &Ruby, value: Value) -> Result<RArray, Error> {
+    let message = "a Transition loads from [exit, entry, configuration], three Arrays of Symbols";
+    let lists = exact_array_n_with::<3>(ruby, value, || message)?;
+    let fields = ruby.ary_new_capa(3);
+    for (list, field) in lists.into_iter().zip(["exit", "entry", "configuration"]) {
+        let array = exact_array_with(ruby, list, || message)?;
+        let copy = ruby.ary_new_capa(array.len());
+        let mut seen = std::collections::HashSet::with_capacity(array.len());
+        for index in 0..array.len() {
+            let element: Value = array.entry(isize::try_from(index).unwrap_or(isize::MAX))?;
+            let state = name(ruby, element, field)?;
+            if !seen.insert(state) {
+                return Err(range(ruby, format!("{field} names a state twice")));
+            }
+            copy.push(element)?;
+        }
+        copy.freeze();
+        fields.push(copy)?;
+    }
+    fields.freeze();
+    Ok(fields)
 }
 
 /// A frozen `HarelMachines::Transition` over three frozen Arrays of state

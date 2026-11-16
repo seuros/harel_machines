@@ -98,6 +98,19 @@ class ArgumentTest < Minitest::Test
     assert_equal "a chart of #{largest + 1} states is not supported, the shapes are #{H::SHAPES}", error.message
   end
 
+  # More states than a StateId numbers is refused as RangeError before any
+  # name is numbered, not by an overflow.
+  def test_more_states_than_a_state_id_numbers_is_out_of_range
+    error = assert_raises(RangeError) do
+      H::Chart.build do |c|
+        c.parallel :root, parent: nil
+        65_535.times { |index| c.atomic(:"s#{index}", parent: :root) }
+      end
+    end
+
+    assert_equal "a chart of 65536 states is not supported, the shapes are #{H::SHAPES}", error.message
+  end
+
   def test_a_history_marker_or_kind_outside_the_core_s_is_out_of_range
     error = assert_raises(RangeError) do
       H::Chart.build { |c| c.compound :on, parent: nil, initial: :on, history: :sideways }

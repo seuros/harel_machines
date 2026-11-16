@@ -86,18 +86,20 @@ impl Model {
         slots: &[Option<StateId>],
         entry: &mut Vec<StateId>,
     ) {
-        let restore = match (inherited, self.state(state).history) {
-            (Restore::Subtree, _) | (_, History::Deep) => Restore::Subtree,
-            (Restore::Child, _) | (_, History::Shallow) => Restore::Child,
-            (Restore::Initial, History::None) => Restore::Initial,
+        let on_path = toward
+            .iter()
+            .copied()
+            .find(|&id| self.parent(id) == Some(state));
+        // History applies from the target down: a state the explicit path
+        // runs through opens every child from scratch.
+        let restore = match (on_path, inherited, self.state(state).history) {
+            (None, Restore::Subtree, _) | (None, _, History::Deep) => Restore::Subtree,
+            (None, Restore::Child, _) | (None, _, History::Shallow) => Restore::Child,
+            (Some(_), _, _) | (None, Restore::Initial, History::None) => Restore::Initial,
         };
         match self.state(state).composition {
             Composition::Atomic => {}
             Composition::Compound { initial } => {
-                let on_path = toward
-                    .iter()
-                    .copied()
-                    .find(|&id| self.parent(id) == Some(state));
                 let (child, next) = match (on_path, restore, slots[usize::from(state)]) {
                     (Some(child), _, _) => (child, restore),
                     (None, Restore::Subtree, Some(child)) => (child, Restore::Subtree),

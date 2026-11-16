@@ -24,7 +24,9 @@ module HarelMachines
   type history_marker = :none | :shallow | :deep
 
   # Whether a transition leaves the state it starts from. The two only differ
-  # when the source contains the target or is the target.
+  # when the source contains the target or is the target. When the source
+  # contains the target, an internal transition keeps the source itself
+  # active; its active descendants may exit and re-enter.
   type transition_kind = :external | :internal
 
   # The states a transition leaves and joins, and the leaves it settles in,

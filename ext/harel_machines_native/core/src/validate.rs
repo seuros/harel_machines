@@ -1,7 +1,8 @@
 //! The checks a chart, a configuration and a history pass before anything
 //! is resolved over them.
 
-use crate::buffer::broken;
+use crate::buffer::{Buffer, broken};
+use crate::indexed;
 use crate::{
     Chart, ChartError, Composition, Configuration, History, LastActive, Refusal, State, StateId,
 };
@@ -29,7 +30,7 @@ pub fn tree(
     }
     let mut roots = 0_usize;
     let mut root = 0;
-    for (id, state) in (0..).zip(states) {
+    for (id, state) in indexed(states) {
         match state.parent {
             None => (roots, root) = (roots + 1, id),
             Some(parent) => {
@@ -84,10 +85,7 @@ fn count(children: &[StateId], id: StateId) -> StateId {
 
 fn compositions(states: &[State], children: &[StateId]) -> Result<(), ChartError> {
     for (error, broken) in COMPOSITIONS {
-        if (0..)
-            .zip(states)
-            .any(|(id, state)| broken(states, children, id, state))
-        {
+        if indexed(states).any(|(id, state)| broken(states, children, id, state)) {
             return Err(error);
         }
     }
@@ -103,7 +101,7 @@ fn fill_depths(states: &[State], depths: &mut [StateId]) -> Result<(), ChartErro
     }
     let parent = |id: StateId| states.get(usize::from(id)).and_then(|state| state.parent);
     let depth_of = |depths: &[StateId], id: StateId| depths.get(usize::from(id)).copied();
-    for start in (0..).take(len) {
+    for (start, _) in indexed(states) {
         let mut steps = 0_usize;
         let mut cursor = start;
         let base = loop {
@@ -182,7 +180,7 @@ pub fn active<const N: usize>(
             cursor = parent;
         }
     }
-    for ((id, state), (&on, &count)) in (0..).zip(chart.states()).zip(active.iter().zip(&held)) {
+    for ((id, state), (&on, &count)) in indexed(chart.states()).zip(active.iter().zip(&held)) {
         let fits = match state.composition {
             Composition::Atomic => true,
             Composition::Compound { .. } => count == 1,
@@ -204,6 +202,88 @@ pub fn leaves<const N: usize>(
     Ok(Configuration::from_marks(&leaf))
 }
 
+/// Checks `exited` is an exit set some transition over `chart` produces, in
+/// the order it produces it.
+///
+/// A transition exits everything active below its boundary, and the boundary
+/// too when it leaves it. So the set is empty, or it is the whole active
+/// subtree under one state (each compound state in it has exactly one child
+/// in it, each parallel state all of its regions), or it is the whole active
+/// subtree of every region of one parallel state. Its order is the one a
+/// transition gives it: deepest first, states at one depth in the order of
+/// the leaf that put them there, leaves ascending.
+pub fn exits<const N: usize>(chart: &Chart<N>, exited: &[StateId]) -> Result<(), Refusal> {
+    let mut member = [false; N];
+    for &id in exited {
+        chart.state(id)?;
+        let mark = slot(&mut member, id)?;
+        if *mark {
+            return Err(Refusal::InvalidHistory);
+        }
+        *mark = true;
+    }
+    let inside = |member: &[bool; N], id: StateId| member.get(usize::from(id)) == Some(&true);
+    let mut held = [0 as StateId; N];
+    let mut tops = 0_usize;
+    let mut top_parent = None;
+    for &id in exited {
+        match chart.parent(id)? {
+            Some(parent) if inside(&member, parent) => *slot(&mut held, parent)? += 1,
+            parent => {
+                tops += 1;
+                if tops > 1 && top_parent != parent {
+                    return Err(Refusal::InvalidHistory);
+                }
+                top_parent = parent;
+            }
+        }
+    }
+    if tops > 1 {
+        let Some(parallel) = top_parent else {
+            return Err(Refusal::InvalidHistory);
+        };
+        let spans = chart.state(parallel)?.composition == Composition::Parallel
+            && usize::from(chart.children(parallel)) == tops;
+        if !spans {
+            return Err(Refusal::InvalidHistory);
+        }
+    }
+    for &id in exited {
+        let count = held.get(usize::from(id)).copied().unwrap_or(0);
+        let whole = match chart.state(id)?.composition {
+            Composition::Atomic => true,
+            Composition::Compound { .. } => count == 1,
+            Composition::Parallel => count == chart.children(id),
+        };
+        if !whole {
+            return Err(Refusal::InvalidHistory);
+        }
+    }
+    let mut canonical = Buffer::<N>::new();
+    let mut taken = [false; N];
+    for (id, _) in indexed(chart.states()) {
+        let leaf = chart.state(id)?.composition == Composition::Atomic;
+        if !leaf || !inside(&member, id) {
+            continue;
+        }
+        let mut cursor = Some(id);
+        while let Some(state) = cursor.filter(|&state| inside(&member, state)) {
+            let mark = slot(&mut taken, state)?;
+            if *mark {
+                break;
+            }
+            *mark = true;
+            canonical.push(state)?;
+            cursor = chart.parent(state)?;
+        }
+    }
+    chart.order_innermost_first(&mut canonical)?;
+    if canonical.as_slice() != exited {
+        return Err(Refusal::InvalidHistory);
+    }
+    Ok(())
+}
+
 /// Checks `last_active` is a history some transitions over `chart` leave.
 ///
 /// Every slot belongs to a compound state of the chart and names one of its
@@ -217,7 +297,7 @@ pub fn history<const N: usize>(
     chart: &Chart<N>,
     last_active: &LastActive<N>,
 ) -> Result<(), Refusal> {
-    for (parent, slot) in (0..).zip(last_active.slots()) {
+    for (parent, slot) in indexed(last_active.slots()) {
         let Some(child) = *slot else { continue };
         let compound = chart
             .state(parent)
@@ -268,7 +348,7 @@ fn low(key: u32) -> Option<StateId> {
 /// parent: the inverted depth above the index.
 fn deepest_first<const N: usize>(chart: &Chart<N>) -> Result<[u32; N], Refusal> {
     let mut order = [u32::MAX; N];
-    for (key, id) in order.iter_mut().zip(0..).take(chart.len()) {
+    for (key, (id, _)) in order.iter_mut().zip(indexed(chart.states())) {
         let depth = StateId::try_from(chart.depth(id)?).map_err(|_| broken("a deep state"))?;
         *key = (u32::from(StateId::MAX - depth) << 16) | u32::from(id);
     }

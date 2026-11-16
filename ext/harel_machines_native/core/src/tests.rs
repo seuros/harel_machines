@@ -2,6 +2,7 @@
 //! compared against over random charts and walks.
 
 mod build;
+mod capacity;
 mod charts;
 mod history;
 mod model;

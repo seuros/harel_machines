@@ -7,8 +7,9 @@ use magnus::typed_data::Obj;
 use magnus::{Error, RClass, RHash, Ruby, Value, method, prelude::*};
 use matryona_machines::ruby::Symbols;
 
-use crate::convert::{Histories, name};
+use crate::convert::{Histories, name, range};
 use crate::names::Names;
+use crate::shape::SHAPES;
 
 /// What a declared state's children mean, with its initial child still named.
 enum Composition {
@@ -139,13 +140,22 @@ impl Declaration {
     ///
     /// # Errors
     ///
-    /// `RangeError` if a name is declared twice, or a parent or an initial
-    /// child names a state that was never declared.
+    /// `RangeError` for more states than the largest shape holds (checked
+    /// before any name is numbered), a name declared twice, or a parent or an
+    /// initial child naming a state that was never declared.
     pub fn resolve(&self, ruby: &Ruby) -> Result<(Names, Vec<State>), Error> {
         let declared = self
             .0
             .try_borrow()
             .map_err(|_| Error::new(ruby.exception_runtime_error(), "declared during a build"))?;
+        let largest = SHAPES.iter().copied().max().unwrap_or(0);
+        if declared.len() > largest {
+            let message = format!(
+                "a chart of {} states is not supported, the shapes are {SHAPES:?}",
+                declared.len()
+            );
+            return Err(range(ruby, message));
+        }
         let names = Names::new(
             ruby,
             declared.iter().map(|state| state.name.clone()).collect(),

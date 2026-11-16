@@ -309,3 +309,32 @@ fn the_deepest_chain_enters_and_exits_without_recursion() -> Result<(), Refusal>
     assert_eq!(again.exit().last(), Some(&0));
     Ok(())
 }
+
+/// UML local semantics: an internal transition from a state into its own
+/// subtree keeps that state, and only that state, active; what it holds
+/// leaves and the target enters.
+///
+/// ```text
+/// 0 Root
+/// `- 1 Middle
+///    `- 2 Inner
+///       |- 3 X
+///       `- 4 Y
+/// ```
+#[test]
+fn an_internal_transition_keeps_only_the_source_active() -> Result<(), Refusal> {
+    let chart = Chart::<5>::new(&[
+        State::compound(None, 1),
+        State::compound(Some(0), 2),
+        State::compound(Some(1), 3),
+        State::atomic(Some(2)),
+        State::atomic(Some(2)),
+    ])
+    .unwrap();
+    let step = chart.resolve(&leaves(&chart, &[4]), 0, 3, INTERNAL)?;
+
+    assert_eq!(step.exit(), &[4, 2, 1]);
+    assert_eq!(step.entry(), &[1, 2, 3]);
+    assert_eq!(step.configuration().as_slice(), &[3]);
+    Ok(())
+}

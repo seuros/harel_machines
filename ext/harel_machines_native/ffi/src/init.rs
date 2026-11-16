@@ -1,5 +1,5 @@
 //! The extension's entry point.
-use magnus::{Error, Ruby, prelude::*};
+use magnus::{Error, Ruby, function, prelude::*};
 use matryona_machines::ruby::Symbols;
 
 use crate::convert::Refusals;
@@ -16,5 +16,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     crate::chart::define(chart)?;
     let declaration = crate::declaration::define(chart, ruby)?;
     let history = crate::history::define(ruby, module)?;
-    crate::classes::resolve(ruby, module, chart, declaration, history)
+    crate::classes::resolve(ruby, module, chart, declaration, history)?;
+    let transition = crate::classes::classes(ruby)?.transition.get(ruby);
+    transition.define_singleton_method(
+        "__checked_fields",
+        function!(crate::convert::transition_fields, 1),
+    )
 }

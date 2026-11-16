@@ -120,6 +120,8 @@ impl<const STATES: usize> Chart<STATES> {
     /// self-transition, or a transition into the source's own subtree) exits
     /// and re-enters the source itself, and no more than that, so its sibling
     /// regions keep the leaves they held. The root is a source like any other.
+    /// When the source contains the target, an internal transition keeps the
+    /// source itself active; its active descendants may exit and re-enter.
     ///
     /// # Errors
     ///
@@ -206,7 +208,7 @@ impl<const STATES: usize> Chart<STATES> {
 
     /// Sorts by depth, deepest first, keeping the order of equal depths: each
     /// key is the inverted depth above the position.
-    fn order_innermost_first(&self, exit: &mut Buffer<STATES>) -> Result<(), Refusal> {
+    pub(crate) fn order_innermost_first(&self, exit: &mut Buffer<STATES>) -> Result<(), Refusal> {
         let original = *exit;
         let mut keys = [0_u32; STATES];
         for ((key, &state), position) in keys.iter_mut().zip(original.as_slice()).zip(0_u32..) {
@@ -264,11 +266,19 @@ impl<const STATES: usize> Chart<STATES> {
                 entry.push(state)?;
             }
             let held = self.state(state)?;
-            let restore = restore.upgraded_by(held.history);
+            let toward = toward.get(usize::from(state)).copied().flatten();
+            // A state above the target is entered (or stays) as named: its
+            // own history and any enclosing one restore nothing on the way
+            // down, so every child it opens starts from scratch. History
+            // applies from the target down.
+            let restore = if toward.is_some() {
+                Restore::Initial
+            } else {
+                restore.upgraded_by(held.history)
+            };
             match held.composition {
                 Composition::Atomic => {}
                 Composition::Compound { initial } => {
-                    let toward = toward.get(usize::from(state)).copied().flatten();
                     let (state, restore) = toward.map_or_else(
                         || match (restore, last_active.last_child(state)) {
                             (Restore::Subtree, Some(child)) => (child, Restore::Subtree),

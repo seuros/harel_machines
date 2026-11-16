@@ -28,6 +28,16 @@ pub type StateId = u16;
 /// it has not worked out yet.
 pub const MAX_STATES: usize = 65_535;
 
+/// Each item with its index as a [`StateId`], stopping before an index a
+/// `StateId` cannot hold. A range counting in `StateId` itself would step
+/// past `u16::MAX` once its last index is handed out.
+pub(crate) fn indexed<I: IntoIterator>(items: I) -> impl Iterator<Item = (StateId, I::Item)> {
+    items
+        .into_iter()
+        .enumerate()
+        .map_while(|(index, item)| StateId::try_from(index).ok().map(|id| (id, item)))
+}
+
 #[cfg(test)]
 extern crate std;
 #[cfg(test)]

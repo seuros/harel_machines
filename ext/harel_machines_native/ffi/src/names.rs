@@ -18,10 +18,14 @@ impl Names {
     /// # Errors
     ///
     /// `RangeError` if a name is declared twice: the duplicate would be
-    /// unreachable and every lookup would resolve to the later index.
+    /// unreachable and every lookup would resolve to the later index. Also
+    /// `RangeError` for more names than a `StateId` numbers, though a chart
+    /// checks its count against the largest shape before it gets here.
     pub fn new(ruby: &Ruby, order: Vec<String>) -> Result<Self, Error> {
         let mut ids = HashMap::with_capacity(order.len());
-        for (state, id) in order.iter().zip(0..) {
+        for (index, state) in order.iter().enumerate() {
+            let id = StateId::try_from(index)
+                .map_err(|_| range(ruby, "more states than a chart numbers"))?;
             if ids.insert(state.clone(), id).is_some() {
                 return Err(range(ruby, format!("state :{state} is declared twice")));
             }

@@ -87,8 +87,15 @@ impl State {
 /// [`Refusal::UnknownState`].
 ///
 /// The chart is fixed-size and holds no heap. Its scratch space during a
-/// call is a few arrays of `STATES` entries on the stack, so a chart near
-/// [`MAX_STATES`] needs a stack of a few megabytes.
+/// call is a few arrays of `STATES` entries on the stack, and every walk is
+/// iterative, so the stack a call needs grows with `STATES`, not with the
+/// depth of the tree. Measured for `Chart<MAX_STATES>` (aarch64, Rust 1.99,
+/// the least thread stack each call completes on, the call alone): release
+/// builds need 1.75 MiB for [`Chart::new`] (which holds the chart it
+/// returns), 0.81 MiB for [`Chart::configuration`], 2.25 MiB for
+/// [`Chart::enter`] and 2.37 MiB for [`Chart::resolve`]; debug builds need
+/// 4.37, 1.31, 3.25 and 3.94 MiB. A smaller `STATES` needs proportionally
+/// less. Size a thread from these, with headroom for its own frames.
 ///
 /// ```
 /// use harel_machines::{Chart, State, TransitionKind};

@@ -49,7 +49,7 @@ impl<const STATES: usize> Configuration<STATES> {
     /// has checked they form a configuration of its chart.
     pub(crate) fn from_marks(leaf: &[bool]) -> Self {
         let mut configuration = Self::new();
-        for (id, _) in (0..).zip(leaf).filter(|(_, marked)| **marked) {
+        for (id, _) in crate::indexed(leaf).filter(|(_, marked)| **marked) {
             if let Some(slot) = configuration.leaves.get_mut(configuration.len) {
                 *slot = id;
                 configuration.len += 1;

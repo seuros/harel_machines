@@ -95,4 +95,23 @@ class HistoryTest < Minitest::Test
     assert_raises(RangeError) { @chart.enter_with_history(:open, elsewhere) }
     assert_raises(TypeError) { @chart.enter_with_history(:open, @chart) }
   end
+
+  # Specified by hand: an explicitly targeted state is entered as named, so
+  # the deep history of an ancestor restores nothing below it.
+  def test_an_ancestor_s_history_does_not_reach_into_an_explicit_target
+    chart = H::Chart.build do |c|
+      c.compound :root, parent: nil, initial: :off, history: :deep
+      c.atomic :off, parent: :root
+      c.compound :work, parent: :root, initial: :first
+      c.atomic :first, parent: :work
+      c.atomic :last, parent: :work
+    end
+    history = H::History.new(chart)
+    leave = chart.resolve(%i[last], :work, :off, :external)
+    history.record(leave)
+
+    assert_equal %i[work first], chart.resolve_with_history(%i[off], :off, :work, :external, history).entry
+    assert_equal %i[root work first], chart.enter_with_history(:work, history).entry
+    assert_equal %i[root work last], chart.enter_with_history(:root, history).entry
+  end
 end

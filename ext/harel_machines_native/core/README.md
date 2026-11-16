@@ -60,8 +60,12 @@ join.
   one of its children. A refused `record` files nothing.
 
 The scratch space of a call is a handful of `STATES`-entry arrays on the
-stack, and every walk is iterative: depth costs no recursion, but a chart near
-`MAX_STATES` wants a stack of a few megabytes.
+stack, and every walk is iterative: depth costs no recursion, but the stack
+grows with `STATES`. For `Chart<MAX_STATES>` (aarch64, Rust 1.99, measured
+as the least thread stack each call completes on) release builds need
+1.75 MiB for `new`, 0.81 MiB for `configuration`, 2.25 MiB for `enter` and
+2.37 MiB for `resolve`; debug builds need 4.37, 1.31, 3.25 and 3.94 MiB. A
+smaller `STATES` needs proportionally less.
 
 ## A transition is an exit set and an entry set
 
@@ -208,9 +212,11 @@ assert_eq!(LastActive::restored(&download, &saved)?, remembered);
 Recording is the caller's call, and a separate one: resolving is pure, so a
 transition that a guard later refuses leaves no trace.
 
-## Internal transitions stay inside
+## Internal transitions keep the source
 
-The two kinds only differ when the source contains the target or is the target.
+The two kinds only differ when the source contains the target or is the
+target. When the source contains the target, an internal transition keeps the
+source itself active; its active descendants may exit and re-enter.
 
 ```rust
 use harel_machines::{Chart, State, TransitionKind};
@@ -232,6 +238,15 @@ assert!(internal.entry().is_empty());
 let external = call.resolve(&talking, 4, 4, TransitionKind::External)?;
 assert_eq!(external.exit(), &[4]);
 assert_eq!(external.entry(), &[4]);
+
+// Active keeps itself across an internal transition into its subtree, but
+// what it holds still leaves and the target enters.
+let inside = call.resolve(&talking, 2, 3, TransitionKind::Internal)?;
+assert_eq!(inside.exit(), &[4]);
+assert_eq!(inside.entry(), &[3]);
+let outside = call.resolve(&talking, 2, 3, TransitionKind::External)?;
+assert_eq!(outside.exit(), &[4, 2]);
+assert_eq!(outside.entry(), &[2, 3]);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

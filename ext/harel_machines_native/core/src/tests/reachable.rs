@@ -118,3 +118,60 @@ fn restoring_constructors_accept_exactly_the_reachable_states() {
         }
     }
 }
+
+/// Every ordering of `items`.
+fn orderings(items: &[StateId]) -> Vec<Vec<StateId>> {
+    if items.len() <= 1 {
+        return std::vec![items.to_vec()];
+    }
+    let mut all = Vec::new();
+    for (index, &first) in items.iter().enumerate() {
+        let mut rest = items.to_vec();
+        rest.remove(index);
+        for mut tail in orderings(&rest) {
+            tail.insert(0, first);
+            all.push(tail);
+        }
+    }
+    all
+}
+
+#[test]
+fn record_accepts_exactly_the_exit_sets_transitions_produce() {
+    for seed in 0..120 {
+        let mut rng = Rng::new(seed);
+        let n = 1 + rng.below(SMALL - 1);
+        let chart = Chart::<SMALL>::new(&states(&mut rng, n)).unwrap();
+        let ids: Vec<StateId> = (0..).take(n).collect();
+        let configurations: BTreeSet<Vec<StateId>> =
+            reachable(&chart, n).into_iter().map(|(c, _)| c).collect();
+        let mut produced = BTreeSet::new();
+        for leaves in &configurations {
+            let configuration = chart.configuration(leaves).unwrap();
+            for (&source, &target) in ids.iter().flat_map(|s| ids.iter().map(move |t| (s, t))) {
+                for kind in KINDS {
+                    if let Ok(step) = chart.resolve(&configuration, source, target, kind) {
+                        produced.insert(step.exit().to_vec());
+                    }
+                }
+            }
+        }
+        for subset in subsets(&ids) {
+            let candidates = if subset.len() <= 5 {
+                orderings(&subset)
+            } else {
+                let mut reversed = subset.clone();
+                reversed.reverse();
+                std::vec![subset.clone(), reversed]
+            };
+            for exited in candidates {
+                let accepted = LastActive::<SMALL>::new().record(&chart, &exited).is_ok();
+                assert_eq!(
+                    accepted,
+                    produced.contains(&exited),
+                    "seed {seed}: exit {exited:?}"
+                );
+            }
+        }
+    }
+}

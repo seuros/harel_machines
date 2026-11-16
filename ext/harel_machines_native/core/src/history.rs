@@ -82,8 +82,7 @@ impl<const STATES: usize> LastActive<STATES> {
     /// Every compound state that remembers a child, and that child, in
     /// ascending order of the compound state.
     pub fn remembered(&self) -> impl Iterator<Item = (StateId, StateId)> + '_ {
-        (0..)
-            .zip(&self.children)
+        crate::indexed(&self.children)
             .filter_map(|(parent, child)| child.map(|child| (parent, child)))
     }
 
@@ -95,11 +94,15 @@ impl<const STATES: usize> LastActive<STATES> {
     /// # Errors
     ///
     /// [`Refusal::UnknownState`] if any index is past the last state of
-    /// `chart`, [`Refusal::InvalidHistory`] if the history this files is one
-    /// no transitions over `chart` leave (`exited` is not the exit set of a
-    /// transition of this chart, or this history is another chart's).
-    /// Nothing is filed then.
+    /// `chart`. [`Refusal::InvalidHistory`] if `exited` is not exactly an
+    /// exit set some transition of `chart` produces, in its order (a state
+    /// named twice, two children of one compound state, a state without the
+    /// active states below it, the wrong order), or if the history it would
+    /// leave is one no transitions over `chart` leave (this history is
+    /// another chart's, or the exit set contradicts it). Nothing is filed
+    /// then.
     pub fn record(&mut self, chart: &Chart<STATES>, exited: &[StateId]) -> Result<(), Refusal> {
+        validate::exits(chart, exited)?;
         let mut filed = *self;
         for &state in exited {
             if let Some(parent) = chart.parent(state)?

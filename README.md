@@ -139,9 +139,10 @@ declaration order.
 Siblings never disturb the parent that holds them: nothing above the least
 common ancestor of source and target is touched.
 
-`:internal` keeps the source active, and everything between it and the
-target with it. The two kinds only differ when the source contains the target
-or is the target.
+When the source contains the target, an `:internal` transition keeps the
+source itself active; its active descendants may exit and re-enter (on an
+atomic source targeting itself it exits and enters nothing). The two kinds
+only differ when the source contains the target or is the target.
 
 ```ruby
 chart.resolve(%i[idle], :idle, :idle, :internal).exit  # => []

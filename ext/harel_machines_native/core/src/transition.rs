@@ -13,8 +13,10 @@ pub enum TransitionKind {
     /// The source is exited and entered again.
     #[default]
     External,
-    /// The source stays active, and so does everything between it and the
-    /// target.
+    /// When the source contains the target, an internal transition keeps
+    /// the source itself active; its active descendants may exit and
+    /// re-enter. On an atomic source targeting itself it exits and enters
+    /// nothing.
     Internal,
 }
 
