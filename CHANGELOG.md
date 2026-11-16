@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.0](https://github.com/seuros/harel_machines/compare/harel_machines/v0.1.3...harel_machines/v0.2.0) (2026-11-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* check the chart, refuse with Refusal, pin the binding's classes
+
+### Features
+
+* check the chart, refuse with Refusal, pin the binding's classes ([5ed0aa6](https://github.com/seuros/harel_machines/commit/5ed0aa6382b380cddea99c0abd7a566cb5e98256))
+
+
+### Bug Fixes
+
+* full capacity, history on explicit targets, exact exit sets ([a320912](https://github.com/seuros/harel_machines/commit/a320912f18b2a8477f96922ea9bda2d0ef8f347c))
+
 ## [0.1.3](https://github.com/seuros/harel_machines/compare/harel_machines/v0.1.2...harel_machines/v0.1.3) (2026-11-06)
 
 
